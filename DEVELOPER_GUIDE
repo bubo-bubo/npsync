@@ -1,0 +1,79 @@
+To add a new storage type perform actions below. All changes are to be done in
+section of new storage type only if not pointed explicitly. New storage type
+is to be added immediately above section `# copying functions' because
+array `nps_vttype' is assigned by values with reserved indices 0 and 1 by
+storage types `posix://' and `rfio://' respectively.
+
+  * Copy section of implemented storage type
+
+  * Implement all virtual functions: _exists, _get_ftype, _get_cks,
+    _get_cks_type, _get_mode, _set_mode, _get_owner, _set_owner, _get_mtime,
+    _set_mtime, _size, _ls, _mkdir, _cp, _compare_cks, _rm, _compare_mtime,
+    _rm_separator, _leaf_path, _leaf_item, _is_item_name, _glue_paths,
+    _item_path.
+
+    Specific requirements for virtual functions:
+
+    * To prevent pathname expansion and special chars interpretation all paths
+      for utilities are to be double-quoted.
+
+    * _is_item_name is to return error if unacceptable or special (interpreted)
+      char is found in storage item name.
+
+    * _glue_paths is to glue two paths with storage-specific item separator
+
+    * _item_path is to implement path to item with storage-specific item
+      separator and item name decorations.
+
+    * Relative paths as arguments are storage-specific paths for interface
+      utilities implemented with virtual function _item_path.
+
+    * _ls is to list content of directory with newline char as item separator.
+      No recursive listing is allowed. Only names are to be printed, item
+      attributes are to be removed. Name of each child item should be "cleared"
+      before printing if prefix and/or postfix decorate the name.
+      npsync doesn't accept names with newline char '\n'. The char is
+      used by design as Internal Field Separator (IFS) for directory listing.
+
+    * _cp is to implement source file copying of all storage types to
+      destination of new type.
+
+    * Virtual functions _cp of all other storage types are to be updated to
+      implement source file copying of new storage type.
+
+    * _mkdir is to create directory with parent(s) because --create-dirs with
+      catalogue as source creates directories in arbitrary order.
+
+    * _leaf_path is to print empty string for simple item name. The case of
+      absolute path is to be ignored since it is out of funcion domain.
+
+    * _get_mtime is to (not) print ns for the same storage always. It should
+      not depend on something and be changed run-time.
+
+  * Define table of virtual functions for new storage type (array `nps_vtfuncs').
+
+  * Define new storage type (array `nps_vttypes') and help for it (array
+    `nps_vttype_help')
+
+  * Add DEST catalogue load in section `# check DEST' if new storage type is
+    a catalogue
+
+  * Update function format_path to print paths to new storage type items in
+    a nice way if required
+
+Item names on synced storages are to be in one-to-one relationship (as of
+encoding, translation etc.).
+
+Global names with prefixes NPS_ and nps_ are reserved for internal use by
+npsync. Global names reserved by storage interfaces are to start with
+respective prefixes, e.g. POSIX reserved posix_, CASTOR reserved rfio_, NPSYNC
+catalogue reserved npsync_.
+
+No explicit concurrent operations are allowed, absence of synchronization
+primitives in bash, interactive mode and error handling make concurrency too
+complex and error-prone. Concurrent independent npsync execution is to be used
+instead.
+
+An interface to a storage can be implemented as a file. Paths to interface
+files are to be pointed with option --npsync-interface or with environment
+variable NPS_INTERFACE_FILES as a colon-separated list.
