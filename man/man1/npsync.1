@@ -1,0 +1,422 @@
+.\" Copyright (c) 2013-2015 Alexey Filin
+.TH "NPSYNC" 1 2015 "Storage utils" "User Commands"
+.\" cp 
+.SH NAME
+npsync \- synchronize files and directories
+.SH SYNOPSIS
+.LP
+\fBnpsync\fP [\fIOPTION\fP]... \fISRC\fP... \fIDST\fP
+.SH DESCRIPTION
+.LP
+Synchronize \fISRC\fP(s) and \fIDST\fP on storages with non-POSIX interfaces.
+.LP
+\fISRC\fP(s) and \fIDST\fP should exist (see description of storage type `npsync://' for exception).
+\fIDST\fP is parent for \fISRC\fP copy.
+Use option \fB-h\fP to print available storage interfaces.
+.LP
+Interface utilities used to access storage(s) are run with \fItimeout\fP.
+SIGTERM is sent in 10 minutes, SIGKILL is sent in 15 minutes of utility execution wall-clock time.
+.SH OPTIONS
+.LP
+.TP 11
+\fB-a\fP
+Archive mode, the same as \`-r -c -d mtime,size'.
+.TP 11
+\fB-c\fP
+The same as \`--create-dirs --create-files'.
+.TP 11
+\fB--copied\fP \fIFILE\fP
+Add to \fIFILE\fP names of source files and directories (to be) copied to \fIDST\fP.
+.TP 11
+\fB--create-dirs\fP
+Create absent destination directories existing in source.
+.TP 11
+\fB--create-files\fP
+Create absent destination files existing in source.
+.TP 11
+\fB-d\fP \fICRITERIA\fP
+Set difference criteria for source-destination file comparison.
+\fICRITERIA\fP is a comma-separated list of words (without spaces): \fImtime\fP, \fIsize\fP, \fIcks\fP.
+.RS 11
+.IP "  * \fImtime\fP" 11
+if destination modification time older.
+.IP "  * \fIsize\fP" 11
+is file sizes are equal. If mtime has been tested, then size is compared only if mtimes are equal.
+.IP "  * \fIcks\fP" 11
+is file checksums are equal.
+.RE
+.IP "" 11
+Default list is empty, so no files are compared.
+.TP 11
+\fB--exclude\fP \fIPATTERN\fP
+Exclude source files matching \fIbash\fP(1) \fIPATTERN\fP.
+.TP 11
+\fB--exclude-file\fP \fIFILE\fP
+Exclude source items read from \fIFILE\fP.
+.TP 11
+\fB--exclude-regex\fP \fIPATTERN\fP
+Exclude source files matching \fIregex\fP(3) \fIPATTERN\fP.
+.TP 11
+\fB-f\fP
+Force execution, ignore errors.
+.TP 11
+\fB-i\fP
+Prompt before every modification.
+.TP 11
+\fB-h\fP
+Print help and exit.
+.TP 11
+\fB--include\fP \fIPATTERN\fP
+Include source files matching \fIbash\fP(1) \fIPATTERN\fP.
+.TP 11
+\fB--include-file\fP \fIFILE\fP
+Include source items read from \fIFILE\fP.
+.TP 11
+\fB--include-regex\fP \fIPATTERN\fP
+Include source files matching \fIregex\fP(3) \fIPATTERN\fP.
+.TP 11
+\fB-l\fP \fILEVEL\fP
+Copy nested directories with \fILEVEL\fP as the maximum level of nesting
+(by default the number is zero i.e. unlimited).
+.TP 11
+\fB--npsync-interface\fP \fIFILE\fP
+Load npsync storage interface from \fIFILE\fP.
+.TP 11
+\fB-p\fP \fIFILE\fP
+Add source file and directory attributes to \fIFILE\fP.
+The \fIFILE\fP can be used later with prefix `npsync://' as source or destination.
+.IP "" 13
+NB: The option turns on checksum calculation for all source files.
+.IP "" 13
+NB2: The option can't be used simultaneously with \`-t'.
+.TP 11
+\fB-r\fP
+Synchronize and/or copy nested directories recursively.
+.TP 11
+\fB-s\fP \fIATTRS\fP
+The same as
+.br
+`--sync-dir-attrs \fIATTRS\fP --sync-file-attrs \fIATTRS\fP'.
+.TP 11
+\fB--sync-dir-attrs\fP \fIATTRS\fP
+Synchronize directory attributes in destination with source.
+\fIATTRS\fP is a comma-separated list of words (without spaces): \fImode\fP, \fImtime\fP, \fIowner\fP.
+.RS 11
+.IP "  * \fImode\fP" 11
+file mode bits.
+.IP "  * \fImtime\fP" 11
+modification time.
+.IP "  * \fIowner\fP" 11
+uid and gid.
+.RE
+.TP 11
+\fB--sync-file-attrs\fP \fIATTRS\fP
+Synchronize file attributes in destination with source.
+\fIATTRS\fP is a comma-separated list of words (without spaces): \fImode\fP, \fImtime\fP, \fIowner\fP.
+.RS 11
+.IP "  * \fImode\fP" 11
+file mode bits.
+.IP "  * \fImtime\fP" 11
+modification time.
+.IP "  * \fIowner\fP" 11
+uid and gid.
+.RE
+.TP 11
+\fB--synced\fP \fIFILE\fP
+Add to \fIFILE\fP names of source files and directories with attributes
+(to be) synchronized in destination. List generated in test
+mode (files and dirs with attrs to be synced) may differ since:
+.RS 11
+.IP "  *" 4
+Items absent in destination can't be checked (when option \`-c' is given).
+.IP "  *" 4
+File copying changes mtime of parent dir.
+.RE
+.TP 11
+\fB-t\fP
+Test mode, don't perform real synchronization and/or copying, simply
+report potential problems and discover what is to be synchronized and/or copied.
+.IP "" 13
+NB: The option can't be used simultaneously with \`-p'.
+.TP 11
+\fB-v\fP
+Verbose output. Multiple -v options increase the verbosity.
+Default level is equal zero. The maximum is equal 2.
+.TP 11
+\fB--version\fP
+Print version and exit.
+.SH "INCLUDE/EXCLUDE PATTERNS AND FILES"
+Paths used in pattern matching are source paths.
+Files exclude-file and include-file if pointed are to contain paths separated by newline character.
+Each pattern option can be assigned only once.
+Exclude-file and include-file can be assigned some times, contents of the files are added.
+.LP
+There are three policies to match file paths:
+.IP "  1." 5
+Neither patterns nor exclude-file nor include-file are assigned.
+Include all files by default. 
+.IP "  2." 5
+An exclude pattern or file assigned first in command line. Matching algo:
+.RS 2
+.IP "  2.1" 6
+Include all files by default.
+.IP "  2.2" 6
+If path to file matches an exclude pattern (bash or regex) or is read from exclude-file exclude it then check if file matches an include pattern (bash or regex) or is read from include-file include it.
+.RE
+.IP "  3." 5
+An include pattern or file assigned first in command line. Matching algo:
+.RS 4
+.IP "  3.1" 6
+Exclude all files by default.
+.IP "  3.2" 6
+If path to file matches an include pattern (bash or regex) or is read from include-file include it then check if file matches an exclude pattern (bash or regex) or is read from exclude-file exclude it.
+.RE
+.LP
+Filtering of directory paths works the same way with exclude-file and include-file only.
+Pattern matching for directory paths is not performed.
+.SH "ASYNCHRONOUS EVENTS"
+.LP
+Default.
+.SH "EXIT STATUS"
+.LP
+.IP "124" 5
+Utility terminated
+.IP "137" 5
+Utility killed
+.IP "70" 5
+Failed to execute a command
+.IP "71" 5
+Option is wrong
+.IP "72" 5
+Nested dir
+.IP "73" 5
+Too deep level of nested dirs
+.IP "74" 5
+Is not a regular file
+.IP "75" 5
+Is not a directory
+.IP "76" 5
+Checksum type mismatch for source and destination
+.IP "77" 5
+Checksum mismatch for source and created copy
+.IP "78" 5
+Checksum type not supported
+.IP "79" 5
+Corrupted line in npsync-file
+.IP "80" 5
+Destination file/dir does not exist
+.IP "81" 5
+Unacceptable name of storage item
+.IP "82" 5
+Files can't be copied from catalogue
+.IP "83" 5
+Wrong mtime format
+.LP
+See also exit status of used utilities.
+.SH "CONSEQUENCES OF ERRORS"
+.LP
+If \fInpsync\fP is prematurely terminated by a signal or error, files
+or file hierarchies may be only partially copied and/or files
+and directories may have incorrect permissions, modification time, owner.
+.SH "APPLICATION USAGE"
+.LP
+\fBNpsync\fP implements a small subset of rsync features, so if \fISRC\fP and
+\fIDST\fP are placed on storages with POSIX interfaces then use of rsync can be smarter.
+Data copying is verified always with checksum matching like rsync does.
+The utility was designed to operate with multi-terabyte nested directories
+placed on storages of different types so only regular files and directories
+are supported.
+No extended attributes are synchronized.
+Use an archiver to keep not regular files and extended attributes or small files
+efficiently.
+.LP
+Destination file or directory is ignored if it is absent in source.
+An error happens in inverse case.
+If \fISRC\fP is alone swap it with \fIDST\fP in argument list and run \fBnpsync\fP in test mode to discover destination files or directories absent in source.
+.LP
+Be careful, attribute synchronization can change destination directory mtime so a destination file absent in source can become newer than its parent directory.
+.LP
+Catalogue can be used as \fISRC\fP or \fIDST\fP.
+The only difference is file copying, catalogue doesn't keep files, so can't be used as a source for file copying.
+Directory creation is provided by catalogue as a source with options \`-r --create-dirs -f', but mtime may differ from original because attributes of parent directories can be synchronized before child creation.
+So mtime is to be synced after directory creation with options \`-r -s mtime -f'.
+.LP
+The version supports checksum type \fIadler32\fP only.
+.SH EXAMPLES
+.IP " 1." 4
+Attribute comparison.
+Destination attributes are compared with source.
+Case to discover what destination attributes are to be synchronized:
+.RS 4
+.IP "" 4
+.EX
+npsync -r -t -f -s mode,mtime,owner SRC DST
+.EE
+.RE
+.IP " 2." 4
+Common comparison.
+Report potential problems and discover what source
+files and directories are to be copied.
+Case before mirroring to test enviromnent and access to source(s).
+Case to discover what files and directories were
+added or updated in source and absent or outdated in destination:
+.RS 4
+.IP "" 4
+.EX
+npsync -a -t -f SRC DST
+.EE
+.TP 4
+NB:
+Swap source with destination in argument list and run common
+comparison to discover what items were removed from source and exist
+in destination.
+.RE
+.IP " 3." 4
+Full comparison.
+Checksums of each pair source -- destination are calculated and compared.
+Case to discover silent data corruptions:
+.RS 4
+.IP "" 4
+.EX
+npsync -r -t -f -d mtime,size,cks SRC DST
+.EE
+.RE
+.IP " 4." 4
+Attribute synchronization. Destination attributes are synchronized with source.
+Case to restore destination attributes if they were lost (e.g. CASTOR
+doesn't keep seconds in mtime so seconds can be restored after copying
+from CASTOR):
+.RS 4
+.IP "" 4
+.EX
+npsync -r -s mode,mtime,owner -v SRC DST &> DST.out
+.EE
+.TP 4
+NB:
+Be careful, outdated destination after attribute synchronization
+can't be updated with common mirroring.
+Only full mirroring or comparison can discover mismatched files.
+.RE
+.IP " 5." 4
+Common mirroring. Case of outdated destination:
+.RS 4
+.IP "" 4
+.EX
+npsync -a -v -v SRC DST &> DST.out
+.EE
+.TP 4
+NB:
+Catalogue as a source provides comparison with destination attributes only.
+No destination files can be replaced.
+.RE
+.IP " 6." 4
+Full mirroring.
+Checksums of each pair source -- destination are calculated and compared.
+Destination file is replaced with source if checksums differ.
+No files and directories absent in destination are copied from source(s), only error messages about the items are printed.
+Case to restore from source(s) (e.g. from back-up) after storage errors (e.g. silent data corruptions) in destination:
+.RS 4
+.IP "" 4
+.EX
+npsync -r -c -d mtime,size,cks -v -v SRC DST &> DST.out
+.EE
+.TP 4
+NB:
+Catalogue as a source provides comparison with destination attributes only.
+No destination files can be replaced
+.RE
+.IP " 7." 4
+Interactive selection of mirrored files and directories.
+Case to speed up interactive selection with two stage execution.
+First stage is to create interactively list of mirrored files and directories:
+.RS 4
+.IP "" 4
+.EX
+npsync -a -t -i --copied FILE SRC DST
+.EE
+.RE
+.IP "" 4
+Second one is to mirror with the list:
+.RS 4
+.IP "" 4
+.EX
+npsync -a --include-file FILE SRC DST
+.EE
+.RE
+.IP " 8." 4
+Catalogue creation.
+Catalogue can be used as a source or destination.
+The only difference is file copying, catalogue doesn't keep files, so can't be used as a source for file copying.
+Case to create catalogue:
+.RS 4
+.IP "" 4
+.EX
+npsync -a SRC npsync://SRC.npsync
+.EE
+.RE
+.IP " 9." 4
+Catalogue clearing.
+File used with -p option is not recreated so can contain multiple outdated
+records for the same file or directory being used some times with modified
+source. If file and directory modification history doesn't matter the
+records can be removed.
+Case to create copy of catalogue without outdated records:
+.RS 4
+.IP "" 4
+.EX
+npsync npsync://orig.npsync npsync://copy.npsync
+.EE
+.TP 4
+NB:
+Order of records in catalogue can change after its modification.
+.RE
+.IP " 10." 5
+Full offline comparison.
+Catalogue can be used for comparison like file storage as a source and destination without limitations.
+Moreover comparison in the case is performed much faster.
+It is not required a lot of I/O operations to get attributes and checksums from catalogue.
+Case to perform full comparison by catalogues only:
+.RS 5
+.IP "" 4
+.EX
+npsync -d mtime,size,cks -s mode,mtime,owner -t npsync://first.npsync npsync://second.npsync
+.EE
+.TP 4
+NB:
+Equivalence can be tested yet faster with catalogue checksum comparison.
+Old records in the case are to be removed from catalogues as described above and checksums are to be calculated and compared for sorted catalogues:
+.IP "" 8
+.EX
+sort -n catalogue|md5sum
+.EE
+.RE
+.SH BUGS
+\fBNpsync\fP doesn't accept names with newline char '\\n'. The char is used by design as Internal Field Separator (IFS) for directory listing.
+.SH "FUTURE DIRECTIONS"
+List of storage interfaces implemented currently includes FS with POSIX interface, CASTOR HSM system, NPSYNC catalogue.
+The interfaces are implemented with virtual functions to storage utilities, so \fBnpsync\fP was designed to extend the list easily for any type of storage with tree-like representation of contents by interface utilities.
+A list of possible cases includes:
+.IP "  *" 4
+Storage without POSIX interface with interface utilities (e.g. a remote, cloud storage).
+.IP "  *" 4
+FS with unusable or absent kernel driver.
+Interface utilities could provide access to storage without the driver.
+.IP "  *" 4
+FS implemented with Linux FUSE.
+Interface utilities could bypass FUSE to accelerate access to the FS.
+.IP "  *" 4
+File and directory names can be converted somehow for syncing with storage function _item_path.
+So a storage interface can provide specific path composition or translate names from one language to another.
+.IP "  *" 4
+The utility was written in bash, so can be easily adapted by user e.g. to perform additional actions for synchronization or copying.
+.SH "SEE ALSO"
+.IP "POSIX FS: " 10
+\fIcp\fP, \fIls\fP, \fImkdir\fP, \fItouch\fP, \fIchmod\fP, \fIchown\fP, \fIstat\fP, \fIrm\fP
+.IP "CASTOR: " 10
+\fIrfcp\fP, \fInsls\fP, \fInsmkdir\fP, \fInstouch\fP, \fInssetchecksum\fP, \fInschmod\fP, \fInschown\fP, \fIrfstat\fP, \fInsrm\fP
+.SH "COPYRIGHT"
+Copyright \(co 2013-2015 Alexey Filin.
+License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>.
+.br
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.

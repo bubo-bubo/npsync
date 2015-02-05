@@ -1,0 +1,27 @@
+Bash version is to be at least 4.0 (associative arrays were added in version
+4.0 of bash).
+
+Utility to compute checksum is provided with npsync. It should be built with C
+compiler:
+
+> gcc -O6 -Wall adler32.c -o adler32 -lz
+
+Run npsync with option -h to list available storage interfaces.
+Paths to `adler32' and storage utilities should be tuned manually in npsync for
+installation if required:
+
+  * Paths to general-purpose utilities are assigned in section `# common utilities' of npsync.
+
+  * Paths to storage utilities are assigned in subsection `#----------------- utilities' in storage specific sections of npsync:
+
+    * `# POSIX storage interface' -- POSIX FS
+
+    * `# CASTOR storage interface' -- CASTOR HSM system
+
+An interface to a storage can be implemented as a file. Paths to interface
+files are to be pointed with option --npsync-interface or with environment
+variable NPS_INTERFACE_FILES as a colon-separated list.
+For the sake of security the option is to be removed from argument list
+and the environment variable is to be unset before run in a non-trusted
+environment. As a prohibitive way processing of the option and the environment
+variable can be commented out in the utility.

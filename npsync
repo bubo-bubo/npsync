@@ -1,0 +1,2365 @@
+#!/bin/bash
+#############################################################################
+#
+# npsync -- synchronize files and directories
+#
+# Copyright (C) 2013-2015 Alexey Filin
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or (at your option) any later version.
+# 
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+#
+
+#set -env
+#set -v
+
+# default checksum type
+NPS_CKS_TYPE='AD'
+
+# supported checksum commands
+unset NPS_CKS_CMD
+declare -A NPS_CKS_CMD
+
+# adler32 output format: 4-byte hex number
+NPS_CKS_CMD['AD']='/home/castor/npsync/adler32'
+
+# placeholder for dir checksum (used as file type by npsync://)
+readonly NPS_DIR_CKS='--------'
+# placeholder for dir checksum type
+readonly NPS_DIR_CKS_TYPE='--'
+
+# 10 minute timeout to send TERM to a running command
+NPS_CMD_TERM_TIMEOUT='10m'
+
+# 15 minute timeout to send KILL to a running command
+NPS_CMD_KILL_TIMEOUT='15m'
+
+#############################################################################
+# exit error codes
+
+# man timeout
+NPS_CMD_TERMINATED=124
+NPS_CMD_KILLED=137
+
+NPS_NO_SUCH_COMMAND=70           # Failed to execute a command
+NPS_WRONG_ARGS=71                # Option is wrong
+NPS_NESTED_DIR=72                # Nested dir
+NPS_TOO_DEEP_NESTING=73          # Too deep level of nested dirs
+NPS_IS_NOT_REGULAR=74            # Is not a regular file
+NPS_IS_NOT_DIRECTORY=75          # Is not a directory
+NPS_CKS_TYPE_MISMATCH=76         # Checksum type mismatch for source and destination
+NPS_COPY_CKS_MISMATCH=77         # Checksum mismatch for source and created copy
+NPS_CKS_TYPE_NOT_SUPPORTED=78    # Checksum type not supported
+NPS_CORRUPTED_NPSYNC=79          # Corrupted line in npsync:// file
+NPS_DST_ITEM_DOES_NOT_EXIST=80   # Destination file/dir does not exist
+NPS_UNACCEPTABLE_NAME=81         # Unacceptable name of storage item
+NPS_COPY_FILE_FROM_CATALOGUE=82  # Files can't be copied from catalogue
+NPS_WRONG_MTIME_FORMAT=83        # Wrong mtime format
+
+#############################################################################
+# aux funcs
+
+readonly NPS_UTIL_NAME="$0"
+readonly NPS_UTIL_VERSION=0x30201
+readonly NPS_UTIL_LICENSE="Copyright (C) 2013-2015 Alexey Filin
+License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>.
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law."
+
+readonly NPS_OPTIONS_HELP="
+  -a         Archive mode, the same as \`-r -c -d mtime,size'.
+               NB: No attributes are synchronized.
+  -c         The same as \`--create-dirs --create-files'.
+  --copied FILE
+             Add to FILE names of source files and directories (to be) copied to
+             destination.
+  --create-dirs
+             Create absent destination directories existing in source.
+  --create-files
+             Create absent destination files existing in source.
+  -d CRITERIA
+             Set difference criteria for source-destination file comparison.
+             CRITERIA is a comma-separated list of words: mtime, size, cks.
+               * mtime  if destination modification time older
+               * size   is file sizes are equal. If mtime has been tested,
+                          then size is compared only if mtimes are equal.
+               * cks    is file checksums are equal
+             Default list is empty, so no files will be compared.
+  --exclude PATTERN
+             Exclude source files matching bash(1) PATTERN.
+  --exclude-file FILE
+             Exclude source items read from FILE.
+  --exclude-regex PATTERN
+             Exclude source files matching regex(3) PATTERN.
+  -f         Force execution, ignore errors.
+  -h         Print help and exit.
+  -i         Prompt before modification.
+  --include PATTERN
+             Include source files matching bash(1) PATTERN.
+  --include-file FILE
+             Include source items read from FILE.
+  --include-regex PATTERN
+             Include source files matching regex(3) PATTERN.
+  -l LEVEL   Copy nested directories with LEVEL as the maximum level of nesting
+             (by default the number is zero i.e. unlimited).
+  --npsync-interface FILE
+             Load npsync storage interface from FILE.
+  -p FILE    Add source file and directory attributes to FILE. The FILE can be
+             used later with prefix \`npsync://' as source or destination.
+               NB: The option turns on calculation of source file checksum.
+               NB2: The option can't be used simultaneously with \`-t'.
+  -r         Synchronize and/or copy nested directories recursively.
+  -s ATTRIBUTES
+             The same as
+             \`--sync-dir-attrs ATTRIBUTES --sync-file-attrs ATTRIBUTES'.
+  --sync-dir-attrs ATTRIBUTES
+             Synchronize directory attributes in destination. ATTRIBUTES is a
+             comma-separated list of words: mode, mtime, owner.
+               * mode   file mode bits.
+               * mtime  modification time.
+               * owner  uid and gid.
+  --sync-file-attrs ATTRIBUTES
+             Synchronize file attributes in destination. ATTRIBUTES is a
+             comma-separated list of words: mode, mtime, owner.
+               * mode   file mode bits.
+               * mtime  modification time.
+               * owner  uid and gid.
+  --synced FILE
+             Add to FILE names of source files and directories with attributes
+             (to be) synchronized in destination. List generated in test
+             mode (files and dirs with attrs to be synced) may differ since:
+               * Items absent in destination can't be checked (when option
+                 \`-c' is given).
+               * File copying changes mtime of parent dir.
+  -t         Test mode, don't perform real synchronization or copying, simply
+             report potential problems and discover what is to be
+             synchronized and/or copied.
+               NB: The option can't be used simultaneously with \`-p'.
+  -v         Verbose output. Multiple -v options increase the verbosity.
+             The maximum is 2.
+  --version  Print version and exit."
+
+function nps_usage() {
+    local OIFS="$IFS"
+    IFS='
+'
+    "$NPS_CAT" <<EOF
+Usage: $NPS_UTIL_NAME [OPTION]... SRC... DEST
+Synchronize SRC and DEST on storages with non-POSIX interfaces.
+
+SRC and DEST are pointed in accordance with storage type as:
+${nps_vttype_help[*]}
+$NPS_OPTIONS_HELP
+
+SRC and DEST should exist on storage (see description of storage type
+\`npsync://' for exception). DEST is parent for SRC copy.
+
+Report bugs to <Alexey.Filin at gmail.com>.
+EOF
+    IFS="$OIFS"
+}
+
+# print arguments to stderr
+function nps_echo2err() {
+    echo "$NPS_UTIL_NAME: $*" >&2
+}
+
+# print exit status of failed command and return last exit status
+function nps_failed() {
+    local rv=$?
+    case $rv in
+	$NPS_CMD_TERMINATED) nps_echo2err "\`$1' terminated after $NPS_CMD_TERM_TIMEOUT"
+	    ;;
+	$NPS_CMD_KILLED) nps_echo2err "\`$1' killed after $NPS_CMD_KILL_TIMEOUT"
+	    ;;
+	*) nps_echo2err "\`$1' failed with exit status $rv"
+	    ;;
+    esac
+    return $rv
+}
+
+# print path in nice way, update for a new storage type if required
+# $1 -- vt type
+# $2 -- root path
+# $3 -- relative path
+function nps_format_path() {
+    if [ "$1" == 'posix://' -o "$1" == 'rfio://' ]; then
+	if [ ${#2} -ne 0 -a ${#3} -ne 0 ]; then
+	    echo "\`$2/$3'"
+	elif [ ${#3} -ne 0 ]; then
+	    echo "\`$3'"
+	else
+	    echo "\`$2'"
+	fi
+    else
+	if [ ${#2} -ne 0 -a ${#3} -ne 0 ]; then
+	    echo "\`$1':\`$2':\`$3'"
+	elif [ ${#3} -ne 0 ]; then
+	    echo "\`$1':\`$3'"
+	else
+	    echo "\`$1':\`$2'"
+	fi
+    fi
+}
+
+# print error message
+function nps_perr() {
+    local s1=''
+    local s2=''
+    case $1 in
+    $NPS_NO_SUCH_COMMAND)
+        nps_echo2err "ERROR: \`$2': No such command."
+	;;
+    $NPS_WRONG_ARGS)
+	if [ -n "$3" ]; then
+	    nps_echo2err "ERROR: \`$2 $3': Wrong arguments"
+	elif [ -n "$2" ]; then
+	    nps_echo2err "ERROR: \`$2': Wrong argument"
+	else
+	    nps_echo2err "ERROR: Wrong argument"
+	fi
+	echo ""
+	nps_usage "$NPS_UTIL_NAME"
+	;;
+    $NPS_NESTED_DIR)
+	s1=`nps_format_path "$2" "$3" "$4"`
+	nps_echo2err "ERROR: $s1: Nested directory"
+	;;
+    $NPS_TOO_DEEP_NESTING)
+	s1=`nps_format_path "$2" "$3" "$4"`
+	nps_echo2err "ERROR: $s1: Too deep nesting level"
+	;;
+    $NPS_IS_NOT_REGULAR)
+	s1=`nps_format_path "$2" "$3" "$4"`
+	nps_echo2err "ERROR: $s1: Is not a regular file"
+	;;
+    $NPS_IS_NOT_DIRECTORY)
+	s1=`nps_format_path "$2" "$3" "$4"`
+	nps_echo2err "ERROR: $s1: Is not a directory"
+	;;
+    $NPS_CKS_TYPE_MISMATCH)
+	s1=`nps_format_path "$3" "$4" "$5"`
+	s2=`nps_format_path "$7" "$8" "$9"`
+        nps_echo2err "ERROR: $s2: Checksum type mismatch (\`$6' != \`$2' of source $s1)"
+	;;
+    $NPS_COPY_CKS_MISMATCH)
+	s1=`nps_format_path "$3" "$4" "$5"`
+	s2=`nps_format_path "$7" "$8" "$9"`
+        nps_echo2err "ERROR: $s2: Copy checksum mismatch (\`$6' != \`$2' of source $s1)"
+	;;
+    $NPS_CORRUPTED_NPSYNC)
+        nps_echo2err "ERROR: \`$2':$3: Corrupted npsync line: \`$4'"
+	;;
+    $NPS_DST_ITEM_DOES_NOT_EXIST)
+	s1=`nps_format_path "$2" "$3" "$4"`
+        nps_echo2err "ERROR: $s1: Destination item does not exist"
+	;;
+    $NPS_CKS_TYPE_NOT_SUPPORTED)
+	s1=`nps_format_path "$3" "$4" "$5"`
+	nps_echo2err "ERROR: \`$2': Checksum type of file $s1 not supported"
+	;;
+    $NPS_UNACCEPTABLE_NAME)
+	nps_echo2err "\`$3': Unacceptable name of \`$2' item"
+	;;
+    $NPS_COPY_FILE_FROM_CATALOGUE)
+	s1=`nps_format_path "$2" "$3" "$4"`
+	nps_echo2err "ERROR: $s1: Files can't be copied from catalogue"
+	;;
+    $NPS_WRONG_MTIME_FORMAT)
+        nps_echo2err "ERROR: \`$2': Wrong mtime format"
+	;;
+    *)
+	nps_echo2err "ERROR: $1: Wrong error code (internal error)"
+	;;
+    esac
+}
+
+# check for execution access
+function nps_check_utility() {
+    if [ ! -x "$1" ]; then
+	nps_perr $NPS_NO_SUCH_COMMAND "$1"
+	exit $NPS_NO_SUCH_COMMAND
+    fi
+}
+
+# $1 -- source vt type
+# $2 -- source root path
+# $3 -- source relative path
+# $4 -- file to save path into
+function nps_save_path_to_file() {
+    [ ${#4} -eq 0 ] && return 0
+    local path=`${nps_vtfuncs["$1_glue_paths"]} "$2" "$3"`
+    echo "$path" >> "$4" || nps_failed "echo \"$path\" >> \"$4\""
+}
+
+# recursively convert src path to dst format and print convertion
+# $1 -- source vt type
+# $2 -- source path
+# $3 -- destination vt type
+function nps_convert_src_to_dst_path() {
+    local item_path=`${nps_vtfuncs["$1_leaf_path"]} "$2"`
+    local item_name=`${nps_vtfuncs["$1_leaf_item"]} "$2"`
+    ${nps_vtfuncs["$3_is_item_name"]} "$item_name" || return $?
+    if [ ${#item_path} -ne 0 ]; then
+	item_path=`nps_convert_src_to_dst_path "$1" "$item_path" "$3"` || return $?
+    fi
+    ${nps_vtfuncs["$3_item_path"]} "$item_path" "$item_name"
+    return 0
+}
+
+# $1 -- compared mtime
+# $2 -- reference mtime
+function nps_compare_mtime() {
+    local c_secs=
+    local c_nsecs=
+    local r_secs=
+    local r_nsecs=
+    if [[ $1 =~ ^([[:digit:]]+)\.([[:digit:]]+)$ ]]; then
+	c_secs="${BASH_REMATCH[1]}"
+	c_nsecs="${BASH_REMATCH[2]}"
+    elif [[ $1 =~ ^([[:digit:]]+)\.$ ]]; then
+	# nsecs could be skipped by negligence if equal to zero
+	c_secs="${BASH_REMATCH[1]}"
+	c_nsecs=0
+    elif [[ $1 =~ ^([[:digit:]]+)$ ]]; then
+	c_secs="${BASH_REMATCH[1]}"
+    else
+	nps_perr $NPS_WRONG_MTIME_FORMAT "$1"
+	return $NPS_WRONG_MTIME_FORMAT
+    fi
+    if [[ $2 =~ ^([[:digit:]]+)\.([[:digit:]]+)$ ]]; then
+	r_secs="${BASH_REMATCH[1]}"
+	r_nsecs="${BASH_REMATCH[2]}"
+    elif [[ $2 =~ ^([[:digit:]]+)\.$ ]]; then
+	# nsecs could be skipped by negligence if equal to zero
+	r_secs="${BASH_REMATCH[1]}"
+	r_nsecs=0
+    elif [[ $2 =~ ^([[:digit:]]+)$ ]]; then
+	r_secs="${BASH_REMATCH[1]}"
+    else
+	nps_perr $NPS_WRONG_MTIME_FORMAT "$2"
+	return $NPS_WRONG_MTIME_FORMAT
+    fi
+    if [ "${#c_nsecs}" -eq 0 -o "${#r_nsecs}" -eq 0 ]; then
+	# zero nsecs if one of mtimes doesn't provide it
+	c_nsecs=0
+	r_nsecs=0
+    elif [ "${#c_nsecs}" -ne "${#r_nsecs}" ]; then
+	# nsecs comparison is to take into account skipped orders
+	if [ "${#c_nsecs}" -gt "${#r_nsecs}" ]; then
+	    local d=$(( ${#c_nsecs} - ${#r_nsecs} ))
+	    local tail=
+	    printf -v tail "%0${d}i" 0
+	    r_nsecs="$r_nsecs$tail"
+	else
+	    local d=$(( ${#r_nsecs} - ${#c_nsecs} ))
+	    local tail=
+	    printf -v tail "%0${d}i" 0
+	    c_nsecs="$c_nsecs$tail"
+	fi
+    fi
+    # else arithmetic expansion evaluates number with prefix '0' to octal
+    r_nsecs="10#$r_nsecs"
+    c_nsecs="10#$c_nsecs"
+    if (( "$c_secs" == "$r_secs" && "$c_nsecs" == "$r_nsecs" )); then
+	echo "same_age"
+    elif (( "$c_secs" < "$r_secs" )); then
+	echo "older"
+    elif (( "$c_secs" == "$r_secs" && "$c_nsecs" < "$r_nsecs" )); then
+	echo "older"
+    else
+	echo "newer"
+    fi
+    return 0
+}
+
+#############################################################################
+# common utilities
+
+readonly NPS_TIMEOUT='/usr/bin/timeout'
+readonly NPS_AWK='/bin/awk'
+readonly NPS_CAT='/bin/cat'
+readonly NPS_DATE='/bin/date'
+readonly NPS_CUT='/usr/bin/cut'
+
+nps_check_utility "$NPS_TIMEOUT"
+nps_check_utility "$NPS_AWK"
+nps_check_utility "$NPS_CAT"
+nps_check_utility "$NPS_DATE"
+nps_check_utility "$NPS_CUT"
+# check all checksum types!
+nps_check_utility "${NPS_CKS_CMD[AD]}"
+
+#############################################################################
+# storage interface declaration
+
+# virtual funcs table (assoc array)
+unset nps_vtfuncs
+declare -A nps_vtfuncs
+
+# types of virtual table entries
+unset nps_vttypes
+declare -a nps_vttypes
+
+# help for virtual table entries
+unset nps_vttype_help
+declare -a nps_vttype_help
+
+#############################################################################
+# POSIX storage interface
+
+if [ -x '/bin/cp' ]; then
+
+    #----------------- utilities
+
+    readonly NPS_LS='/bin/ls'
+    readonly NPS_MKDIR='/bin/mkdir'
+    readonly NPS_TOUCH='/bin/touch'
+    readonly NPS_CHMOD='/bin/chmod'
+    readonly NPS_CHOWN='/bin/chown'
+    readonly NPS_CP='/bin/cp'
+    readonly NPS_STAT='/usr/bin/stat'
+    readonly NPS_RM='/bin/rm'
+
+    nps_check_utility "$NPS_LS"
+    nps_check_utility "$NPS_MKDIR"
+    nps_check_utility "$NPS_TOUCH"
+    nps_check_utility "$NPS_CHMOD"
+    nps_check_utility "$NPS_CHOWN"
+    #nps_check_utility "$NPS_CP"
+    nps_check_utility "$NPS_STAT"
+    nps_check_utility "$NPS_RM"
+
+    #----------------- virtual functions
+
+    # $1 -- item root path
+    # $2 -- item relative path
+    # return zero if item exists
+    function posix_exists() {
+	local s=`posix_glue_paths "$1" "$2"`
+	[ -a "$s" -o -h "$s" ]
+    }
+
+    # $1 -- item root path
+    # $2 -- item relative path
+    # print type in char format ( `-', `d', `l' , etc )
+    function posix_get_ftype() {
+	local s=`posix_glue_paths "$1" "$2"`
+	local out=`"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_LS" -ld "$s"` || { nps_failed "$NPS_LS -ld \"$s\""; return $?; }
+	#out=`echo "$out"|"$NPS_AWK" '{print substr($0,1,1)}'`
+	out=`echo "$out"|"$NPS_CUT" -c 1`
+        # high performance ("contiguous data") file
+	[ "$out" == "C" ] && echo "-" || echo "$out"
+    }
+
+    # $1 -- file root path
+    # $2 -- file relative path
+    # $3 -- checksum type
+    # return checksum
+    function posix_get_cks() {
+	local s=`posix_glue_paths "$1" "$2"`
+	local out=`"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "${NPS_CKS_CMD[$3]}" "$s"` || { nps_failed "${NPS_CKS_CMD[$3]} \"$s\""; return $?; }
+	echo $out|"$NPS_AWK" '{print $1}'
+    }
+
+    # $1 -- file root path
+    # $2 -- file relative path
+    # return checksum type
+    function posix_get_cks_type() {
+	echo "$NPS_CKS_TYPE"
+    }
+
+    # $1 -- item root path
+    # $2 -- item relative path
+    # return mode in octal if item exists
+    function posix_get_mode() {
+	local s=`posix_glue_paths "$1" "$2"`
+	local mode=`"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_STAT" -c %a "$s"` || { nps_failed "$NPS_STAT -c %a \"$s\""; return $?; }
+	echo "0$mode"
+    }
+
+    # $1 -- item root path
+    # $2 -- item relative path
+    # $3 -- mode
+    function posix_set_mode() {
+	local s=`posix_glue_paths "$1" "$2"`
+	if [ $NPS_VERBOSE_OUTPUT -gt 1 ]; then
+	    "$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_CHMOD" -v "$3" "$s" || { nps_failed "$NPS_CHMOD -v \"$3\" \"$s\""; return $?; }
+	else
+	    "$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_CHMOD" "$3" "$s" || { nps_failed "$NPS_CHMOD \"$3\" \"$s\""; return $?; }
+	fi
+    }
+
+    # $1 -- item root path
+    # $2 -- item relative path
+    # return ownership in format uid:gid
+    function posix_get_owner() {
+	local s=`posix_glue_paths "$1" "$2"`
+	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_STAT" -c %u:%g "$s" || { nps_failed "$NPS_STAT -c %u:%g \"$s\""; return $?; }
+    }
+
+    # $1 -- item root path
+    # $2 -- item relative path
+    # $3 -- owner
+    function posix_set_owner() {
+	local s=`posix_glue_paths "$1" "$2"`
+	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_CHOWN" "$3" "$s" || { nps_failed "$NPS_CHOWN \"$3\" \"$s\""; return $?; }
+    }
+
+    # $1 -- item root path
+    # $2 -- item relative path
+    # return modification time in seconds.nanoseconds (since 1970-01-01 00:00:00 UTC)
+    function posix_get_mtime() {
+	local s=`posix_glue_paths "$1" "$2"`
+	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_DATE" +%s.%N -r "$s" || { nps_failed "$NPS_DATE +%s.%N -r \"$s\""; return $?; }
+    }
+
+    # $1 -- item root path
+    # $2 -- item relative path
+    # $3 -- modification time
+    function posix_set_mtime() {
+	local s=`posix_glue_paths "$1" "$2"`
+	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_TOUCH" -d "@$3" "$s" || { nps_failed "$NPS_TOUCH -d \"@$3\" \"$s\""; return $?; }
+    }
+
+    # $1 -- item root path
+    # $2 -- item relative path
+    # return size of file in bytes
+    function posix_get_size() {
+	local s=`posix_glue_paths "$1" "$2"`
+	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_STAT" -c %s "$s" || { nps_failed "$NPS_STAT -c %s \"$s\""; return $?; }
+    }
+
+    # $1 -- directory root path
+    # $2 -- directory relative path
+    function posix_ls() {
+	local s=`posix_glue_paths "$1" "$2"`
+	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_LS" -1 -A "$s" || { nps_failed "$NPS_LS -1 -A \"$s\""; return $?; }
+    }
+
+    # NB: source args are for reference only
+    # $1 -- source vt type
+    # $2 -- source root path
+    # $3 -- source relative path
+    # $4 -- destination root path
+    # $5 -- destination relative path
+    function posix_mkdir() {
+	local s=`posix_glue_paths "$4" "$5"`
+	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_MKDIR" -p "$s" || { nps_failed "$NPS_MKDIR -p \"$s\""; return $?; }
+    }
+
+    # NB: source args are for reference only
+    # copy to POSIX dir
+    # $1 -- source vt type
+    # $2 -- source root path
+    # $3 -- source relative path
+    # $4 -- destination root path
+    # $5 -- destination relative path
+    # $6 -- source checksum
+    # $7 -- source checksum type
+    function posix_cp() {
+	local s1=`posix_glue_paths "$2" "$3"`
+	local s2=`posix_glue_paths "$4" "$5"`
+	if [ "$1" == "rfio://" ]; then
+	    if [ $NPS_VERBOSE_OUTPUT -gt 1 ]; then
+		"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RFCP" "$s1" "$s2" || { nps_failed "$NPS_RFCP \"$s1\" \"$s2\""; return $?; }
+	    else
+		"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RFCP" "$s1" "$s2" >/dev/null || { nps_failed "$NPS_RFCP \"$s1\" \"$s2\""; return $?; }
+	    fi
+	else
+	    # copying opimized for POSIX-POSIX
+	    if [ $NPS_VERBOSE_OUTPUT -gt 1 ]; then
+		"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_CP" --preserve=all -v "$s1" "$s2" || { nps_failed "$NPS_CP --preserve=all -v \"$s1\" \"$s2\""; return $?; }
+	    else
+		"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_CP" --preserve=all "$s1" "$s2" || { nps_failed "$NPS_CP --preserve=all \"$s1\" \"$s2\""; return $?; }
+	    fi
+	fi
+    }
+
+    # NB: source args are for reference only
+    # $1 -- source vt type
+    # $2 -- source root path
+    # $3 -- source relative path
+    # $4 -- destination root path
+    # $5 -- destination relative path
+    # $6 -- source checksum
+    # $7 -- source checksum type
+    function posix_compare_cks() {
+	local s=`posix_glue_paths "$4" "$5"`
+	local cks=`"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "${NPS_CKS_CMD[$7]}" "$s"` || { nps_failed "${NPS_CKS_CMD[$7]} \"$s\""; return $?; }
+	cks=`echo $cks|"$NPS_AWK" '{print $1}'`
+	[ -z "$cks" ] && { nps_perr $NPS_COPY_CKS_MISMATCH "$6" "$1" "$2" "$3" "$cks" "posix://" "$4" "$5"; return $NPS_COPY_CKS_MISMATCH; }
+	if [[ "0x$cks" -ne "0x$6" ]]; then
+	    "$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RM" -f "$s" || { nps_failed "$NPS_RM -f \"$s\""; return $?; }
+	    nps_perr $NPS_COPY_CKS_MISMATCH "$6" "$1" "$2" "$3" "$cks" "posix://" "$4" "$5"
+	    return $NPS_COPY_CKS_MISMATCH
+	fi
+    }
+
+    # $1 -- file root path
+    # $2 -- file relative path
+    function posix_rm() {
+	local s=`posix_glue_paths "$1" "$2"`
+	if [ $NPS_VERBOSE_OUTPUT -gt 1 ]; then
+	    "$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RM" -v -f "$s" || { nps_failed "$NPS_RM -v -f \"$s\""; return $?; }
+	else
+	    "$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RM" -f "$s" || { nps_failed "$NPS_RM -f \"$s\""; return $?; }
+	fi
+    }
+
+    # $1 -- compared mtime
+    # $2 -- reference mtime
+    function posix_compare_mtime() {
+	nps_compare_mtime "$1" "$2"
+    }
+
+    # $1 -- path
+    # print path without trailing separator
+    function posix_rm_separator() {
+	# remove trailing slash
+	echo "${1%/}"
+    }
+
+    # $1 -- path
+    # print path to copied item
+    function posix_leaf_path() {
+	local name=`posix_rm_separator "$1"`
+	# remove item name
+	[ "${name%/*}" != "$name" ] && echo "${name%/*}"
+    }
+
+    # $1 -- path
+    # print copied item name
+    function posix_leaf_item() {
+	local name=`posix_rm_separator "$1"`
+	# remove path and print item name
+	echo "${name##*/}"
+    }
+
+    # $1 -- item name
+    function posix_is_item_name() {
+	# check for unacceptable name chars
+	# '/' is POSIX name separator
+	if [[ $1 =~ / ]]; then
+	    nps_perr $NPS_UNACCEPTABLE_NAME "posix://" "$1"
+	    return $NPS_UNACCEPTABLE_NAME
+	fi
+	return 0
+    }
+
+    # $1 -- super path (can be empty)
+    # $2 -- sub path (can be empty)
+    function posix_glue_paths() {
+	[ ${#1} -ne 0 -a ${#2} -ne 0 ] && { echo "$1/$2"; return 0; }
+	[ ${#1} -ne 0 ] && { echo "$1"; return 0; }
+	echo "$2"
+	return 0
+    }
+
+    # $1 -- path (can be empty)
+    # $2 -- item name (can be empty)
+    function posix_item_path() {
+	posix_glue_paths "$1" "$2"
+    }
+
+    nps_vtfuncs['posix://_exists']=posix_exists
+    nps_vtfuncs['posix://_get_ftype']=posix_get_ftype
+    nps_vtfuncs['posix://_get_cks']=posix_get_cks
+    nps_vtfuncs['posix://_get_cks_type']=posix_get_cks_type
+    nps_vtfuncs['posix://_get_mode']=posix_get_mode
+    nps_vtfuncs['posix://_set_mode']=posix_set_mode
+    nps_vtfuncs['posix://_get_owner']=posix_get_owner
+    nps_vtfuncs['posix://_set_owner']=posix_set_owner
+    nps_vtfuncs['posix://_get_mtime']=posix_get_mtime
+    nps_vtfuncs['posix://_set_mtime']=posix_set_mtime
+    nps_vtfuncs['posix://_get_size']=posix_get_size
+    nps_vtfuncs['posix://_ls']=posix_ls
+    nps_vtfuncs['posix://_mkdir']=posix_mkdir
+    nps_vtfuncs['posix://_cp']=posix_cp
+    nps_vtfuncs['posix://_compare_cks']=posix_compare_cks
+    nps_vtfuncs['posix://_rm']=posix_rm
+    nps_vtfuncs['posix://_compare_mtime']=posix_compare_mtime
+    nps_vtfuncs['posix://_rm_separator']=posix_rm_separator
+    nps_vtfuncs['posix://_leaf_path']=posix_leaf_path
+    nps_vtfuncs['posix://_leaf_item']=posix_leaf_item
+    nps_vtfuncs['posix://_is_item_name']=posix_is_item_name
+    nps_vtfuncs['posix://_glue_paths']=posix_glue_paths
+    nps_vtfuncs['posix://_item_path']=posix_item_path
+
+    nps_vttypes[${#nps_vttypes[*]}]='posix://'
+    nps_vttype_help[${#nps_vttype_help[*]}]="  ${nps_vttypes[${#nps_vttypes[*]}-1]}PATH  POSIX path; PATH can be relative or absolute and pointed
+                without \`${nps_vttypes[${#nps_vttypes[*]}-1]}' (see RFIO path for exception)"
+fi
+
+#############################################################################
+# CASTOR storage interface
+# path with CASTOR TURL (first `rfio://' is removed by npsync!):
+#    "rfio://rfio://[stagehost][:port]/?[svcClass=MySvcClass&]path=/castor/cern.ch/user/n/nobody/Myfile"
+#
+# stager_put/stager_get require a priori knowledge about files to be transfered
+# so can't be used
+
+if [ -x '/usr/bin/rfcp' ]; then
+
+    #----------------- utilities
+
+    readonly NPS_NSLS='/usr/bin/nsls'
+    readonly NPS_NSMKDIR='/usr/bin/nsmkdir'
+    readonly NPS_NSTOUCH='/usr/bin/nstouch'
+    readonly NPS_NSSETCHECKSUM='/usr/bin/nssetchecksum'
+    readonly NPS_NSCHMOD='/usr/bin/nschmod'
+    readonly NPS_NSCHOWN='/usr/bin/nschown'
+    readonly NPS_RFCP='/usr/bin/rfcp'
+    readonly NPS_RFSTAT='/usr/bin/rfstat'
+    readonly NPS_NSRM='/usr/bin/nsrm'
+
+    nps_check_utility "$NPS_NSLS"
+    nps_check_utility "$NPS_NSMKDIR"
+    nps_check_utility "$NPS_NSTOUCH"
+    nps_check_utility "$NPS_NSSETCHECKSUM"
+    nps_check_utility "$NPS_NSCHMOD"
+    nps_check_utility "$NPS_NSCHOWN"
+    #nps_check_utility "$NPS_RFCP"
+    nps_check_utility "$NPS_RFSTAT"
+    nps_check_utility "$NPS_NSRM"
+
+    #----------------- virtual functions
+
+    # $1 -- item root path
+    # $2 -- item relative path
+    # return zero if item exists
+    function rfio_exists() {
+	local s=`rfio_glue_paths "$1" "$2"`
+	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_NSLS" "$s" &>/dev/null
+    }
+
+    # $1 -- item root path
+    # $2 -- item relative path
+    # print type in char format ( `-', `d', `l' , etc )
+    function rfio_get_ftype() {
+	local s=`rfio_glue_paths "$1" "$2"`
+	local out=`"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RFSTAT" "$s"` || { nps_failed "$NPS_RFSTAT \"$s\""; return $?; }
+	echo "$out"|"$NPS_AWK" '/^Protection/{print substr($3,1,1)}'
+    }
+
+    # $1 -- file root path
+    # $2 -- file relative path
+    # $3 -- checksum type
+    # print checksum
+    function rfio_get_cks() {
+	local s=`rfio_glue_paths "$1" "$2"`
+	# nsls doesn't print checksum for files with zero size
+	local size=`rfio_get_size "$1" "$2"`
+	if [ "$size" == "0" ]; then
+	    [ "$3" == "AD" ] && echo '1' # adler32 output for empty file
+	    return
+	fi
+	local out=`"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_NSLS" --checksum "$s"` || { nps_failed "$NPS_NSLS --checksum \"$s\""; return $?; }
+	echo "$out"|"$NPS_AWK" '{print $2}'
+    }
+
+    # $1 -- file root path
+    # $2 -- file relative path
+    # print checksum type
+    function rfio_get_cks_type() {
+	local s=`rfio_glue_paths "$1" "$2"`
+	# nsls doesn't print checksum for files with zero size
+	local size=`rfio_get_size "$1" "$2"`
+	[ "$size" == "0" ] && { echo 'AD'; return; }
+	local out=`"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_NSLS" --checksum "$s"` || { nps_failed "$NPS_NSLS --checksum \"$s\""; return $?; }
+	echo "$out"|"$NPS_AWK" '{print $1}'
+    }
+
+    # $1 -- item root path
+    # $2 -- item relative path
+    # print mode in octal
+    function rfio_get_mode() {
+	local s=`rfio_glue_paths "$1" "$2"`
+	local out=`"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RFSTAT" "$s"` || { nps_failed "$NPS_RFSTAT \"s\""; return $?; }
+	echo "$out"|"$NPS_AWK" 'BEGIN{FS="[()]"}/^Protection/{print substr($2,length($2)-3)}'
+    }
+
+    # $1 -- item root path
+    # $2 -- item relative path
+    # $3 -- mode
+    function rfio_set_mode() {
+	local s=`rfio_glue_paths "$1" "$2"`
+	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_NSCHMOD" "$3" "$s" || { nps_failed "$NPS_NSCHMOD \"$3\" \"$s\""; return $?; }
+    }
+
+    # $1 -- item root path
+    # $2 -- item relative path
+    # print ownership in format uid:gid
+    function rfio_get_owner() {
+	local s=`rfio_glue_paths "$1" "$2"`
+        #"$NPS_NSLS" -l "$s"|"$NPS_AWK" '{print $3":"$4}'
+	local out=`"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RFSTAT" "$s"` || { nps_failed "$NPS_RFSTAT \"$s\""; return $?; }
+	local uid=`echo "$out"|"$NPS_AWK" '/^Uid/{print $3}'`
+	local gid=`echo "$out"|"$NPS_AWK" '/^Gid/{print $3}'`
+	[ -n "$uid" -a -n "$gid" ] && echo "$uid:$gid"
+    }
+
+    # $1 -- item root path
+    # $2 -- item relative path
+    # $3 -- owner
+    function rfio_set_owner() {
+	local s=`rfio_glue_paths "$1" "$2"`
+	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_NSCHOWN" "$3" "$s" || { nps_failed "$NPS_NSCHOWN \"$3\" \"$s\""; return $?; }
+    }
+
+    # $1 -- item root path
+    # $2 -- item relative path
+    # print modification time in seconds.nanoseconds (since 1970-01-01 00:00:00 UTC)
+    function rfio_get_mtime() {
+	local s=`rfio_glue_paths "$1" "$2"`
+	local out=`"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RFSTAT" "$s"` || { nps_failed "$NPS_RFSTAT \"$s\""; return $?; }
+	out=`echo "$out"|"$NPS_AWK" '/^Last modify/{print substr($0,index($0,":")+2)}'`
+	[ -n "$out" ] && "$NPS_DATE" +%s.%N -d "$out" || echo ""
+    }
+
+    # $1 -- item root path
+    # $2 -- item relative path
+    # $3 -- modification time
+    function rfio_set_mtime() {
+	local s=`rfio_glue_paths "$1" "$2"`
+	local mtime=`"$NPS_DATE" -d "@$3" +%Y%m%d%H%M` || { nps_failed "$NPS_DATE -d \"@$3\" +%Y%m%d%H%M"; return $?; }
+	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_NSTOUCH" -c -m -t "$mtime" "$s" || { nps_failed "$NPS_NSTOUCH -c -m -t \"$mtime\" \"$s\""; return $?; }
+    }
+
+    # $1 -- item root path
+    # $2 -- item relative path
+    # return size of file in bytes
+    function rfio_get_size() {
+	local s=`rfio_glue_paths "$1" "$2"`
+	local out=`"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RFSTAT" "$s"` || { nps_failed "$NPS_RFSTAT \"$s\""; return $?; }
+	echo "$out"|"$NPS_AWK" '/^Size \(bytes\)/{print substr($0,index($0,":")+2)}'
+    }
+
+    # $1 -- directory root path
+    # $2 -- directory relative path
+    function rfio_ls() {
+	local s=`rfio_glue_paths "$1" "$2"`
+	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_NSLS" "$s" || { nps_failed "$NPS_NSLS \"$s\""; return $?; }
+    }
+
+    # NB: source args are for reference only
+    # $1 -- source vt type
+    # $2 -- source root path
+    # $3 -- source relative path
+    # $4 -- destination root path
+    # $5 -- destination relative path
+    function rfio_mkdir() {
+	local s=`rfio_glue_paths "$4" "$5"`
+	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_NSMKDIR" -p "$s" || { nps_failed "$NPS_NSMKDIR -p \"$s\""; return $?; }
+    }
+
+    # NB: source args are for reference only
+    # copy to CASTOR dir
+    # $1 -- source vt type
+    # $2 -- source root path
+    # $3 -- source relative path
+    # $4 -- destination root path
+    # $5 -- destination relative path
+    # $6 -- source checksum
+    # $7 -- source checksum type
+    function rfio_cp() {
+	local s1=`rfio_glue_paths "$2" "$3"`
+	local s2=`rfio_glue_paths "$4" "$5"`
+	[ "$7" != "AD" ] && { nps_perr $NPS_CKS_TYPE_NOT_SUPPORTED "$7" "$1" "$2" "$3"; return $NPS_CKS_TYPE_NOT_SUPPORTED; }
+	if "$NPS_NSTOUCH" "$s2" && "$NPS_NSSETCHECKSUM" -n adler32 -k "$6" "$s2"; then
+	    if [ $NPS_VERBOSE_OUTPUT -gt 1 ]; then
+		"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RFCP" "$s1" "$s2" || { nps_failed "$NPS_RFCP \"$s1\" \"$s2\""; return $?; }
+	    else
+		"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RFCP" "$s1" "$s2" >/dev/null || { nps_failed "$NPS_RFCP \"$s1\" \"$s2\""; return $?; }
+	    fi
+	fi
+    }
+
+    # NB: source args are for reference only
+    # $1 -- source vt type
+    # $2 -- source root path
+    # $3 -- source relative path
+    # $4 -- destination root path
+    # $5 -- destination relative path
+    # $6 -- source checksum
+    # $7 -- source checksum type
+    function rfio_compare_cks() {
+	return 0
+    }
+
+    # $1 -- file root path
+    # $2 -- file relative path
+    function rfio_rm() {
+	local s=`rfio_glue_paths "$1" "$2"`
+	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_NSRM" -f "$s" || { nps_failed "$NPS_NSRM -f \"$s\""; return $?; }
+    }
+
+    # $1 -- compared mtime
+    # $2 -- reference mtime
+    function rfio_compare_mtime() {
+	[ -z "$1" -o -z "$2" ] && return 1
+	# NB: seconds are ignored by castor
+	local t1=`"$NPS_DATE" -d "@$1" +%Y%m%d%H%M` || { nps_failed "$NPS_DATE -d \"@$1\" +%Y%m%d%H%M"; return $?; }
+	local t2=`"$NPS_DATE" -d "@$2" +%Y%m%d%H%M` || { nps_failed "$NPS_DATE -d \"@$2\" +%Y%m%d%H%M"; return $?; }
+	if (( "$t1" == "$t2" )); then
+	    echo "same_age"
+	elif (( "$t1" < "$t2" )); then
+	    echo "older"
+	else
+	    echo "newer"
+	fi
+	return 0
+    }
+
+    # $1 -- path
+    # print path without trailing separator
+    function rfio_rm_separator() {
+	# remove trailing slash
+	echo "${1%/}"
+    }
+
+    # $1 -- path
+    # print path to copied item
+    function rfio_leaf_path() {
+	local name=`rfio_rm_separator "$1"`
+	# remove item name
+	[ "${name%/*}" != "$name" ] && echo "${name%/*}"
+    }
+
+    # $1 -- path
+    # print copied item name
+    function rfio_leaf_item() {
+	local name=`rfio_rm_separator "$1"`
+	# remove path and print item name
+	echo "${name##*/}"
+    }
+
+    # $1 -- item name
+    function rfio_is_item_name() {
+	# check for unacceptable or special name chars
+	# '/' is RFIO name separator
+	if [[ $1 =~ / ]]; then
+	    nps_perr $NPS_UNACCEPTABLE_NAME "rfio://" "$1"
+	    return $NPS_UNACCEPTABLE_NAME
+	fi
+	return 0
+    }
+
+    # $1 -- super path (can be empty)
+    # $2 -- sub path (can be empty)
+    function rfio_glue_paths() {
+	[ ${#1} -ne 0 -a ${#2} -ne 0 ] && { echo "$1/$2"; return 0; }
+	[ ${#1} -ne 0 ] && { echo "$1"; return 0; }
+	echo "$2"
+	return 0
+    }
+
+    # $1 -- path (can be empty)
+    # $2 -- item name (can be empty)
+    function rfio_item_path() {
+	rfio_glue_paths "$1" "$2"
+    }
+
+    nps_vtfuncs['rfio://_exists']=rfio_exists
+    nps_vtfuncs['rfio://_get_ftype']=rfio_get_ftype
+    nps_vtfuncs['rfio://_get_cks']=rfio_get_cks
+    nps_vtfuncs['rfio://_get_cks_type']=rfio_get_cks_type
+    nps_vtfuncs['rfio://_get_mode']=rfio_get_mode
+    nps_vtfuncs['rfio://_set_mode']=rfio_set_mode
+    nps_vtfuncs['rfio://_get_owner']=rfio_get_owner
+    nps_vtfuncs['rfio://_set_owner']=rfio_set_owner
+    nps_vtfuncs['rfio://_get_mtime']=rfio_get_mtime
+    nps_vtfuncs['rfio://_set_mtime']=rfio_set_mtime
+    nps_vtfuncs['rfio://_get_size']=rfio_get_size
+    nps_vtfuncs['rfio://_ls']=rfio_ls
+    nps_vtfuncs['rfio://_mkdir']=rfio_mkdir
+    nps_vtfuncs['rfio://_cp']=rfio_cp
+    nps_vtfuncs['rfio://_compare_cks']=rfio_compare_cks
+    nps_vtfuncs['rfio://_rm']=rfio_rm
+    nps_vtfuncs['rfio://_compare_mtime']=rfio_compare_mtime
+    nps_vtfuncs['rfio://_rm_separator']=rfio_rm_separator
+    nps_vtfuncs['rfio://_leaf_path']=rfio_leaf_path
+    nps_vtfuncs['rfio://_leaf_item']=rfio_leaf_item
+    nps_vtfuncs['rfio://_is_item_name']=rfio_is_item_name
+    nps_vtfuncs['rfio://_glue_paths']=rfio_glue_paths
+    nps_vtfuncs['rfio://_item_path']=rfio_item_path
+
+    # default CASTOR root directory
+    CASTOR_ROOT="/castor"
+
+    nps_vttypes[${#nps_vttypes[*]}]='rfio://'
+    nps_vttype_help[${#nps_vttype_help[*]}]="  ${nps_vttypes[${#nps_vttypes[*]}-1]}PATH   CASTOR path; PATH is in RFIO syntax (see e.g. rfcp manual).
+                Prefix \`${nps_vttypes[${#nps_vttypes[*]}-1]}' can be skipped if PATH is started
+                with $CASTOR_ROOT."
+fi
+
+#############################################################################
+# NPSYNC meta storage interface
+# The interface provides a catalogue of files/dirs with attributes.
+# It was supposed to name the interface `meta://' originally, but the name
+# might be confusing, while `npsync://' is transparent and comprehensible
+
+#----------------- virtual functions
+
+# $1 -- item root path
+# $2 -- item relative path
+# return zero if item exists
+function npsync_exists() {
+    [ "npsync://" == "$NPS_SRC_VTTYPE" -a "$1" == "$NPS_SRC_PATH" ] && { [ ${#nps_src_file_cks_type["$2"]} -ne 0 ] && return 0 || return 1; }
+    [ ${#nps_dst_file_cks_type["$2"]} -ne 0 ] && return 0
+    return 1
+}
+
+# $1 -- item root path
+# $2 -- item relative path
+# print type in char format ( `-', `d', `l' , etc )
+function npsync_get_ftype() {
+    if [ "npsync://" == "$NPS_SRC_VTTYPE" -a "$1" == "$NPS_SRC_PATH" ]; then
+	[ ${#nps_src_file_cks["$2"]} -eq 0 ] && return 1
+	[ "${nps_src_file_cks[$2]}" == "$NPS_DIR_CKS" ] && echo 'd' || echo '-'
+	return 0
+    fi
+    [ ${#nps_dst_file_cks["$2"]} -eq 0 ] && return 1
+    [ "${nps_dst_file_cks[$2]}" == "$NPS_DIR_CKS" ] && echo 'd' || echo '-'
+    return 0
+}
+
+# $1 -- file root path
+# $2 -- file relative path
+# $3 -- checksum type
+# print checksum
+function npsync_get_cks() {
+    [ "npsync://" == "$NPS_SRC_VTTYPE" -a "$1" == "$NPS_SRC_PATH" ] && { echo "${nps_src_file_cks[$2]}"; return 0; }
+    echo "${nps_dst_file_cks[$2]}"
+    return 0
+}
+
+# $1 -- file root path
+# $2 -- file relative path
+# print checksum type
+function npsync_get_cks_type() {
+    [ "npsync://" == "$NPS_SRC_VTTYPE" -a "$1" == "$NPS_SRC_PATH" ] && { echo "${nps_src_file_cks_type[$2]}"; return 0; }
+    echo "${nps_dst_file_cks_type[$2]}"
+    return 0
+}
+
+# $1 -- item root path
+# $2 -- item relative path
+# print mode in octal
+function npsync_get_mode() {
+    [ "npsync://" == "$NPS_SRC_VTTYPE" -a "$1" == "$NPS_SRC_PATH" ] && { echo "${nps_src_file_mode[$2]}"; return 0; }
+    echo "${nps_dst_file_mode[$2]}"
+    return 0
+}
+
+# $1 -- item root path
+# $2 -- item relative path
+# $3 -- mode
+function npsync_set_mode() {
+    nps_dst_file_mode["$2"]="$3"
+    NPS_DST_NPSYNC_MODIFIED=1
+    return 0
+}
+
+# $1 -- item root path
+# $2 -- item relative path
+# print ownership in format uid:gid
+function npsync_get_owner() {
+    [ "npsync://" == "$NPS_SRC_VTTYPE" -a "$1" == "$NPS_SRC_PATH" ] && { echo "${nps_src_file_owner[$2]}"; return 0; }
+    echo "${nps_dst_file_owner[$2]}"
+    return 0
+}
+
+# $1 -- item root path
+# $2 -- item relative path
+# $3 -- owner
+function npsync_set_owner() {
+    nps_dst_file_owner["$2"]="$3"
+    NPS_DST_NPSYNC_MODIFIED=1
+    return 0
+}
+
+# $1 -- item root path
+# $2 -- item relative path
+# print modification time in seconds.nanoseconds (since 1970-01-01 00:00:00 UTC)
+function npsync_get_mtime() {
+    [ "npsync://" == "$NPS_SRC_VTTYPE" -a "$1" == "$NPS_SRC_PATH" ] && { echo "${nps_src_file_mtime[$2]}"; return 0; }
+    echo "${nps_dst_file_mtime[$2]}"
+    return 0
+}
+
+# $1 -- item root path
+# $2 -- item relative path
+# $3 -- modification time
+function npsync_set_mtime() {
+    nps_dst_file_mtime["$2"]="$3"
+    NPS_DST_NPSYNC_MODIFIED=1
+    return 0
+}
+
+# $1 -- item root path
+# $2 -- item relative path
+# return size of file in bytes
+function npsync_get_size() {
+    [ "npsync://" == "$NPS_SRC_VTTYPE" -a "$1" == "$NPS_SRC_PATH" ] && { echo "${nps_src_file_size[$2]}"; return 0; }
+    echo "${nps_dst_file_size[$2]}"
+    return 0
+}
+
+# $1 -- directory root path
+# $2 -- directory relative path
+function npsync_ls() { return 0; }
+
+# NB: source args are for reference only
+# $1 -- source vt type
+# $2 -- source root path
+# $3 -- source relative path
+# $4 -- destination root path
+# $5 -- destination relative path
+function npsync_mkdir() {
+    nps_dst_file_type["$5"]='d'
+    nps_dst_file_cks_type["$5"]="$NPS_DIR_CKS_TYPE"
+    nps_dst_file_cks["$5"]="$NPS_DIR_CKS"
+    nps_dst_file_mode["$5"]=`${nps_vtfuncs["$1_get_mode"]} "$2" "$3"` || return $?
+    nps_dst_file_owner["$5"]=`${nps_vtfuncs["$1_get_owner"]} "$2" "$3"` || return $?
+    nps_dst_file_size["$5"]=`${nps_vtfuncs["$1_get_size"]} "$2" "$3"` || return $?
+    nps_dst_file_mtime["$5"]=`${nps_vtfuncs["$1_get_mtime"]} "$2" "$3"` || return $?
+    NPS_DST_NPSYNC_MODIFIED=1
+    return 0
+}
+
+# NB: source args are for reference only
+# copy to NPSYNC dir
+# $1 -- source vt type
+# $2 -- source root path
+# $3 -- source relative path
+# $4 -- destination root path
+# $5 -- destination relative path
+# $6 -- source checksum
+# $7 -- source checksum type
+function npsync_cp() {
+    nps_dst_file_type["$5"]='-'
+    nps_dst_file_cks_type["$5"]="$7"
+    nps_dst_file_cks["$5"]="$6"
+    nps_dst_file_mode["$5"]=`${nps_vtfuncs["$1_get_mode"]} "$2" "$3"` || return $?
+    nps_dst_file_owner["$5"]=`${nps_vtfuncs["$1_get_owner"]} "$2" "$3"` || return $?
+    nps_dst_file_size["$5"]=`${nps_vtfuncs["$1_get_size"]} "$2" "$3"` || return $?
+    nps_dst_file_mtime["$5"]=`${nps_vtfuncs["$1_get_mtime"]} "$2" "$3"` || return $?
+    NPS_DST_NPSYNC_MODIFIED=1
+    return 0
+}
+
+# NB: source args are for reference only
+# $1 -- source vt type
+# $2 -- source root path
+# $3 -- source relative path
+# $4 -- destination root path
+# $5 -- destination relative path
+# $6 -- source checksum
+# $7 -- source checksum type
+function npsync_compare_cks() { return 0; }
+
+# $1 -- file root path
+# $2 -- file relative path
+function npsync_rm() {
+    unset nps_dst_file_type["$2"]
+    unset nps_dst_file_cks_type["$2"]
+    unset nps_dst_file_cks["$2"]
+    unset nps_dst_file_mode["$2"]
+    unset nps_dst_file_owner["$2"]
+    unset nps_dst_file_size["$2"]
+    unset nps_dst_file_mtime["$2"]
+    NPS_DST_NPSYNC_MODIFIED=1
+    return 0
+}
+
+# $1 -- compared mtime
+# $2 -- reference mtime
+function npsync_compare_mtime() {
+    nps_compare_mtime "$1" "$2"
+}
+
+# $1 -- path
+# print path without trailing separator
+function npsync_rm_separator() {
+    # remove trailing slash
+    echo "${1%/}"
+}
+
+# $1 -- path to item
+# root path is path to catalogue
+function npsync_leaf_path() {
+    local name=`npsync_rm_separator "$1"`
+    # remove item name
+    [ "${name%/*}" != "$name" ] && echo "${name%/*}"
+}
+
+# $1 -- path to item
+# no rel path is allowed
+function npsync_leaf_item() {
+    local name=`npsync_rm_separator "$1"`
+    # remove path and print item name
+    echo "${name##*/}"
+}
+
+# $1 -- item name
+function npsync_is_item_name() {
+    # check for unacceptable name chars
+    # '/' is npsync catalogue name separator
+    if [[ $1 =~ / ]]; then
+	nps_perr $NPS_UNACCEPTABLE_NAME "npsync://" "$1"
+	return $NPS_UNACCEPTABLE_NAME
+    fi
+    return 0
+}
+
+# $1 -- super path (can be empty)
+# $2 -- sub path (can be empty)
+function npsync_glue_paths() {
+    [ ${#1} -ne 0 -a ${#2} -ne 0 ] && { echo "$1/$2"; return 0; }
+    [ ${#1} -ne 0 ] && { echo "$1"; return 0; }
+    echo "$2"
+    return 0
+}
+
+# $1 -- path (can be empty)
+# $2 -- item name (can be empty)
+function npsync_item_path() {
+    npsync_glue_paths "$1" "$2"
+}
+
+nps_vtfuncs['npsync://_exists']=npsync_exists
+nps_vtfuncs['npsync://_get_ftype']=npsync_get_ftype
+nps_vtfuncs['npsync://_get_cks']=npsync_get_cks
+nps_vtfuncs['npsync://_get_cks_type']=npsync_get_cks_type
+nps_vtfuncs['npsync://_get_mode']=npsync_get_mode
+nps_vtfuncs['npsync://_set_mode']=npsync_set_mode
+nps_vtfuncs['npsync://_get_owner']=npsync_get_owner
+nps_vtfuncs['npsync://_set_owner']=npsync_set_owner
+nps_vtfuncs['npsync://_get_mtime']=npsync_get_mtime
+nps_vtfuncs['npsync://_set_mtime']=npsync_set_mtime
+nps_vtfuncs['npsync://_get_size']=npsync_get_size
+nps_vtfuncs['npsync://_ls']=npsync_ls
+nps_vtfuncs['npsync://_mkdir']=npsync_mkdir
+nps_vtfuncs['npsync://_cp']=npsync_cp
+nps_vtfuncs['npsync://_compare_cks']=npsync_compare_cks
+nps_vtfuncs['npsync://_rm']=npsync_rm
+nps_vtfuncs['npsync://_compare_mtime']=npsync_compare_mtime
+nps_vtfuncs['npsync://_rm_separator']=npsync_rm_separator
+nps_vtfuncs['npsync://_leaf_path']=npsync_leaf_path
+nps_vtfuncs['npsync://_leaf_item']=npsync_leaf_item
+nps_vtfuncs['npsync://_is_item_name']=npsync_is_item_name
+nps_vtfuncs['npsync://_glue_paths']=npsync_glue_paths
+nps_vtfuncs['npsync://_item_path']=npsync_item_path
+
+nps_vttypes[${#nps_vttypes[*]}]='npsync://'
+nps_vttype_help[${#nps_vttype_help[*]}]="  ${nps_vttypes[${#nps_vttypes[*]}-1]}PATH  path to NPSYNC file. The file may not exist if used as
+                DESTINATION. PATH can be relative or absolute. NPSYNC is a
+                metastorage and can be used as a catalogue only, no real data
+                are kept."
+
+#############################################################################
+# copying functions
+
+# $1 -- question to ask user
+function nps_user_agreed() {
+    local answer
+    while :; do
+	echo -n "$1 (y/n): "
+	read answer
+	case "$answer" in
+	    y|yes) return 0
+		;;
+	    n|no) return 1
+		;;
+	    *) echo "Please answer yes or no."
+		;;
+	esac
+    done
+    return 2
+}
+
+function nps_copy_SYNCED_DIR_ATTRS() {
+    [ ${#NPS_SYNCED_DIR_ATTRS[*]} -eq 0 ] && return 1
+    _NPS_SYNCED_ATTRS['mode']=0
+    _NPS_SYNCED_ATTRS['mtime']=0
+    _NPS_SYNCED_ATTRS['owner']=0
+    [ ${#NPS_SYNCED_DIR_ATTRS['mode']} -ne 0 ] && _NPS_SYNCED_ATTRS['mode']=${NPS_SYNCED_DIR_ATTRS['mode']}
+    [ ${#NPS_SYNCED_DIR_ATTRS['mtime']} -ne 0 ] && _NPS_SYNCED_ATTRS['mtime']=${NPS_SYNCED_DIR_ATTRS['mtime']}
+    [ ${#NPS_SYNCED_DIR_ATTRS['owner']} -ne 0 ] && _NPS_SYNCED_ATTRS['owner']=${NPS_SYNCED_DIR_ATTRS['owner']}
+    return 0
+}
+
+function nps_copy_SYNCED_FILE_ATTRS() {
+    [ ${#NPS_SYNCED_FILE_ATTRS[*]} -eq 0 ] && return 1
+    _NPS_SYNCED_ATTRS['mode']=0
+    _NPS_SYNCED_ATTRS['mtime']=0
+    _NPS_SYNCED_ATTRS['owner']=0
+    [ ${#NPS_SYNCED_FILE_ATTRS['mode']} -ne 0 ] && _NPS_SYNCED_ATTRS['mode']=${NPS_SYNCED_FILE_ATTRS['mode']}
+    [ ${#NPS_SYNCED_FILE_ATTRS['mtime']} -ne 0 ] && _NPS_SYNCED_ATTRS['mtime']=${NPS_SYNCED_FILE_ATTRS['mtime']}
+    [ ${#NPS_SYNCED_FILE_ATTRS['owner']} -ne 0 ] && _NPS_SYNCED_ATTRS['owner']=${NPS_SYNCED_FILE_ATTRS['owner']}
+    return 0
+}
+
+# a priori requirement: destination should exist and match type of source
+# $1 -- source vt type
+# $2 -- source root path
+# $3 -- source relative path
+# $4 -- destination vt type
+# $5 -- destination root path
+# $6 -- destination relative path
+# $7 -- checksum
+# $8 -- checksum type
+# $9 -- file type
+function nps_sync_attrs() {
+    local rv=0
+    local updated=0
+    local src_mode=
+    local dst_mode=
+    local src_owner=
+    local dst_owner=
+    local src_mtime=
+    local dst_mtime=
+    local force_getter=0
+    # to update NPS_NPSYNCINFO_FILE
+    [ -n "$NPS_NPSYNCINFO_FILE" ] && force_getter=1
+
+    if [ ${_NPS_SYNCED_ATTRS['mode']} -ne 0 -o $force_getter -ne 0 ]; then
+	src_mode=`${nps_vtfuncs["$1_get_mode"]} "$2" "$3"` || return $?
+	if [ ${_NPS_SYNCED_ATTRS['mode']} -ne 0 ]; then
+	    dst_mode=`${nps_vtfuncs["$4_get_mode"]} "$5" "$6"` || return $?
+	    [ -z "$src_mode" ] && src_mode='0'
+	    [ -z "$dst_mode" ] && dst_mode='0'
+	    if [ "$src_mode" != "$dst_mode" ]; then
+		[ $NPS_VERBOSE_OUTPUT -gt 0 ] && echo "$dst_mode != $src_mode: mode of destination "`nps_format_path "$4" "$5" "$6"`" is to be synced with source "`nps_format_path "$1" "$2" "$3"`
+		if [ $NPS_INTERACTIVE_RUN -eq 0 ] || nps_user_agreed "Fix mode of "`nps_format_path "$4" "$5" "$6"`"?"; then
+		    if [ $NPS_TEST_MODE -eq 0 ]; then
+			[ $NPS_VERBOSE_OUTPUT -gt 1 ] && echo "changing mode of "`nps_format_path "$4" "$5" "$6"`
+			${nps_vtfuncs["$4_set_mode"]} "$5" "$6" "$src_mode" || return $?
+		    fi
+		    updated=1
+		fi
+	    fi
+	fi
+    fi
+
+    if [ ${_NPS_SYNCED_ATTRS['owner']} -ne 0 -o $force_getter -ne 0 ]; then
+	src_owner=`${nps_vtfuncs["$1_get_owner"]} "$2" "$3"` || return $?
+	if [ ${_NPS_SYNCED_ATTRS['owner']} -ne 0 ]; then
+	    dst_owner=`${nps_vtfuncs["$4_get_owner"]} "$5" "$6"` || return $?
+	    if [ "$src_owner" != "$dst_owner" ]; then
+		[ $NPS_VERBOSE_OUTPUT -gt 0 ] && echo "$dst_owner != $src_owner: owner of destination "`nps_format_path "$4" "$5" "$6"`" is to be synced with source "`nps_format_path "$1" "$2" "$3"`
+		if [ $NPS_INTERACTIVE_RUN -eq 0 ] || nps_user_agreed "Fix owner of "`nps_format_path "$4" "$5" "$6"`"?"; then
+		    if [ $NPS_TEST_MODE -eq 0 ]; then
+			[ $NPS_VERBOSE_OUTPUT -gt 1 ] && echo "changing owner of "`nps_format_path "$4" "$5" "$6"`
+			${nps_vtfuncs["$4_set_owner"]} "$5" "$6" "$src_owner" || return $?
+		    fi
+		    updated=1
+		fi
+	    fi
+	fi
+    fi
+
+    if [ ${_NPS_SYNCED_ATTRS['mtime']} -ne 0 -o $force_getter -ne 0 ]; then
+	src_mtime=`${nps_vtfuncs["$1_get_mtime"]} "$2" "$3"` || return $?
+	if [ ${_NPS_SYNCED_ATTRS['mtime']} -ne 0 ]; then
+	    dst_mtime=`${nps_vtfuncs["$4_get_mtime"]} "$5" "$6"` || return $?
+	    local cmptype='posix://'
+	    if [ "$1" == "rfio://" -o "$4" == "rfio://" ]; then
+		# CASTOR nstouch timestamp distinguishes minutes only :(
+		cmptype='rfio://'
+	    fi
+	    local out=`${nps_vtfuncs["${cmptype}_compare_mtime"]} "$dst_mtime" "$src_mtime"` || return $?
+	    if [ "$out" != "same_age" ]; then
+		[ $NPS_VERBOSE_OUTPUT -gt 0 ] && echo "$dst_mtime != $src_mtime: mtime of destination "`nps_format_path "$4" "$5" "$6"`" is to be synced with source "`nps_format_path "$1" "$2" "$3"`
+		if [ $NPS_INTERACTIVE_RUN -eq 0 ] || nps_user_agreed "Fix mtime of "`nps_format_path "$4" "$5" "$6"`"?"; then
+		    if [ $NPS_TEST_MODE -eq 0 ]; then
+			[ $NPS_VERBOSE_OUTPUT -gt 1 ] && echo "changing mtime of "`nps_format_path "$4" "$5" "$6"`
+			${nps_vtfuncs["$4_set_mtime"]} "$5" "$6" "$src_mtime" || return $?
+		    fi
+		    updated=1
+		fi
+	    fi
+	fi
+    fi
+
+    [ $updated -ne 0 ] && { nps_save_path_to_file "$1" "$2" "$3" "$NPS_SYNCED_ITEMS_FILE" || return $?; }
+
+    if [ -n "$NPS_NPSYNCINFO_FILE" ]; then
+	local src_size=`${nps_vtfuncs["$1_get_size"]} "$2" "$3"` || return $?
+	nps_save_npsync_record "$NPS_NPSYNCINFO_FILE" "$9" "$8" "$7" "$src_mode" "$src_owner" "$src_size" "$src_mtime" "$NPS_NPSYNC_ITEM_PATH" || rv=$?
+    fi
+    return $rv
+}
+
+# $1 -- source vt type
+# $2 -- source root path
+# $3 -- source relative path
+# $4 -- destination vt type
+# $5 -- destination root path
+# $6 -- destination relative path
+# $7 -- source checksum
+# $8 -- source checksum type
+function nps_copy_file() {
+    if [ $NPS_TEST_MODE -eq 0 ]; then
+	[ $NPS_VERBOSE_OUTPUT -gt 1 ] && echo "copying source file "`nps_format_path "$1" "$2" "$3"`" to destination file "`nps_format_path "$4" "$5" "$6"`
+	${nps_vtfuncs["$4_cp"]} "$1" "$2" "$3" "$5" "$6" "$7" "$8" || return $?
+	NPS_FILE_COPIED_FLAG=1
+	[ $NPS_VERBOSE_OUTPUT -gt 1 ] && echo "comparing checksum of source file "`nps_format_path "$1" "$2" "$3"`" with destination file "`nps_format_path "$4" "$5" "$6"`
+	${nps_vtfuncs["$4_compare_cks"]} "$1" "$2" "$3" "$5" "$6" "$7" "$8" || return $?
+    fi
+    nps_save_path_to_file "$1" "$2" "$3" "$NPS_COPIED_ITEMS_FILE"
+}
+
+# $1 -- vt type
+# $2 -- file root path
+# $3 -- file relative path
+# $4 -- checksum type
+function nps_get_cks() {
+    local cks=`${nps_vtfuncs["$1_get_cks"]} "$2" "$3" "$4"` || return $?
+    echo "$cks"
+}
+
+# $1 -- vt type
+# $2 -- file root path
+# $3 -- file relative path
+function nps_get_cks_type() {
+    local cks_type=`${nps_vtfuncs["$1_get_cks_type"]} "$2" "$3"` || return $?
+    if [ ${#cks_type} -ne 0 ]; then
+	[ ${#NPS_CKS_CMD["$cks_type"]} -eq 0 ] && { nps_perr $NPS_CKS_TYPE_NOT_SUPPORTED "$cks_type" "$1" "$2" "$3"; return $NPS_CKS_TYPE_NOT_SUPPORTED; }
+    fi
+    echo "$cks_type"
+}
+
+# $1 -- source vt type
+# $2 -- source root path
+# $3 -- source relative path
+# $4 -- destination vt type
+# $5 -- destination root path
+# $6 -- destination relative path
+function nps_sync_file() {
+    local rv=0
+    local src_cks=
+    local src_cks_type=''
+    local copy_source_file=0
+    local remove_destination_file=0
+    local sync_file_attributes=0
+    local get_src_cks=0
+    # absent destination
+    if ! ${nps_vtfuncs["$4_exists"]} "$5" "$6"; then
+	if [ $NPS_CREATE_ABSENT_FILE -ne 0 ]; then
+	    [ $NPS_VERBOSE_OUTPUT -gt 0 ] && echo "absent destination file "`nps_format_path "$4" "$5" "$6"`", source file "`nps_format_path "$1" "$2" "$3"`
+	    get_src_cks=1
+	    copy_source_file=1
+	else
+	    nps_perr $NPS_DST_ITEM_DOES_NOT_EXIST "$4" "$5" "$6"
+	    return $NPS_DST_ITEM_DOES_NOT_EXIST
+	fi
+    # compare destination with source
+    else
+	# set sync attrs flag for existing file if requested
+	nps_copy_SYNCED_FILE_ATTRS && sync_file_attributes=1
+	local dst_ftype=`${nps_vtfuncs["$4_get_ftype"]} "$5" "$6"` || return $?
+	if [ "$dst_ftype" != "-" ]; then
+	    # not a regular file
+	    nps_perr $NPS_IS_NOT_REGULAR "$4" "$5" "$6"
+	    return $NPS_IS_NOT_REGULAR
+	fi
+	# mtime comparison
+	local compare_flag=1
+	if [ ${NPS_DIFFERENCE_CRITERIA['mtime']} -ne 0 ]; then
+	    local src_mtime=`${nps_vtfuncs["$1_get_mtime"]} "$2" "$3"` || return $?
+	    local dst_mtime=`${nps_vtfuncs["$4_get_mtime"]} "$5" "$6"` || return $?
+	    local cmptype='posix://'
+	    if [ "$1" == "rfio://" -o "$4" == "rfio://" ]; then
+		# CASTOR nstouch timestamp distinguishes minutes only :(
+		cmptype='rfio://'
+	    fi
+	    local out=`${nps_vtfuncs["${cmptype}_compare_mtime"]} "$dst_mtime" "$src_mtime"` || return $?
+	    if [ "$out" == "older" ]; then
+		[ $NPS_VERBOSE_OUTPUT -gt 0 ] && echo "$dst_mtime < $src_mtime: destination "`nps_format_path "$4" "$5" "$6"`" is older source "`nps_format_path "$1" "$2" "$3"`
+		get_src_cks=1
+		remove_destination_file=1
+		copy_source_file=1
+		compare_flag=0
+	    elif [ "$out" == "newer" ]; then
+		# size can be compared if mtimes are equal
+		compare_flag=0
+	    fi
+	fi
+	# size comparison
+	if [ $compare_flag -ne 0 -a ${NPS_DIFFERENCE_CRITERIA['size']} -ne 0 ]; then
+	    local src_size=`${nps_vtfuncs["$1_get_size"]} "$2" "$3"` || return $?
+	    local dst_size=`${nps_vtfuncs["$4_get_size"]} "$5" "$6"` || return $?
+	    if [[ "$dst_size" -ne "$src_size" ]]; then
+		[ $NPS_VERBOSE_OUTPUT -gt 0 ] && echo "$dst_size != $src_size: size mismatch between destination "`nps_format_path "$4" "$5" "$6"`" and source "`nps_format_path "$1" "$2" "$3"`
+		get_src_cks=1
+		remove_destination_file=1
+		copy_source_file=1
+	    fi
+	fi
+	# checksum comparison
+	if [ $copy_source_file -eq 0 -a ${NPS_DIFFERENCE_CRITERIA['cks']} -ne 0 ]; then
+	    src_cks_type=`nps_get_cks_type "$1" "$2" "$3"` || return $?
+	    dst_cks_type=`nps_get_cks_type "$4" "$5" "$6"` || return $?
+	    if [ "$dst_cks_type" != "$src_cks_type" ]; then
+		nps_perr $NPS_CKS_TYPE_MISMATCH "$src_cks_type" "$1" "$2" "$3" "$dst_cks_type" "$4" "$5" "$6"
+		return $NPS_CKS_TYPE_MISMATCH
+	    fi
+	    [ $NPS_VERBOSE_OUTPUT -gt 1 ] && echo "getting checksum of source "`nps_format_path "$1" "$2" "$3"`
+	    src_cks=`nps_get_cks "$1" "$2" "$3" "$src_cks_type"` || return $?
+	    [ $NPS_VERBOSE_OUTPUT -gt 1 ] && echo "getting checksum of destination "`nps_format_path "$4" "$5" "$6"`
+	    local dst_cks=`nps_get_cks "$4" "$5" "$6" "$dst_cks_type"` || return $?
+	    if [[ "0x$dst_cks" -ne "0x$src_cks" ]]; then
+		[ $NPS_VERBOSE_OUTPUT -gt 0 ] && echo "$dst_cks != $src_cks: $src_cks_type checksum mismatch between destination "`nps_format_path "$4" "$5" "$6"`" and source "`nps_format_path "$1" "$2" "$3"`
+		remove_destination_file=1
+		copy_source_file=1
+	    fi
+	    return 0
+	fi
+    fi
+    if [ $copy_source_file -ne 0 ]; then
+	if [ $NPS_TEST_MODE -eq 0 ] && [ $get_src_cks -ne 0 -o -n "$NPS_NPSYNCINFO_FILE" ]; then
+	    src_cks_type=`nps_get_cks_type "$1" "$2" "$3"` || return $?
+	    [ $NPS_VERBOSE_OUTPUT -gt 1 ] && echo "getting checksum of source "`nps_format_path "$1" "$2" "$3"`
+	    src_cks=`nps_get_cks "$1" "$2" "$3" "$src_cks_type"` || return $?
+	fi
+	if [ $remove_destination_file -ne 0 ]; then
+	    if [ $NPS_INTERACTIVE_RUN -eq 0 ] || nps_user_agreed "Replace file "`nps_format_path "$4" "$5" "$6"`"?"; then
+		[ $NPS_TEST_MODE -eq 0 ] && { ${nps_vtfuncs["$4_rm"]} "$5" "$6" || return $?; }
+		nps_copy_file "$1" "$2" "$3" "$4" "$5" "$6" "$src_cks" "$src_cks_type" || return $?
+	    fi
+	else
+	    if [ $NPS_INTERACTIVE_RUN -eq 0 ] || nps_user_agreed "Create file "`nps_format_path "$4" "$5" "$6"`"?"; then
+		nps_copy_file "$1" "$2" "$3" "$4" "$5" "$6" "$src_cks" "$src_cks_type" || return $?
+	    fi
+	fi
+
+	_NPS_SYNCED_ATTRS['mode']=1
+	_NPS_SYNCED_ATTRS['mtime']=1
+	_NPS_SYNCED_ATTRS['owner']=0
+	[ ${#NPS_SYNCED_FILE_ATTRS['owner']} -ne 0 ] && _NPS_SYNCED_ATTRS['owner']=${NPS_SYNCED_FILE_ATTRS['owner']}
+	# no file created in test mode
+	if [ $NPS_TEST_MODE -eq 0 ]; then
+	    local save_INTERACTIVE_RUN=$NPS_INTERACTIVE_RUN # save global var
+	    # skip questions if file has been copied
+	    NPS_INTERACTIVE_RUN=0
+	    nps_sync_attrs "$1" "$2" "$3" "$4" "$5" "$6" "$src_cks" "$src_cks_type" "-" || rv=$?
+	    NPS_INTERACTIVE_RUN=$save_INTERACTIVE_RUN # restore global var
+	fi
+    elif [ $sync_file_attributes -ne 0 ]; then
+	nps_sync_attrs "$1" "$2" "$3" "$4" "$5" "$6" "$src_cks" "$src_cks_type" "-" || rv=$?
+    fi
+    return $rv
+}
+
+# $1 -- source vt type
+# $2 -- source root path
+# $3 -- source relative path
+# $4 -- destination vt type
+# $5 -- destination root path
+# $6 -- destination relative path
+function nps_make_dir() {
+    if [ $NPS_TEST_MODE -eq 0 ]; then
+	[ $NPS_VERBOSE_OUTPUT -gt 1 ] && echo "creating destination directory "`nps_format_path "$4" "$5" "$6"`
+	${nps_vtfuncs["$4_mkdir"]} "$1" "$2" "$3" "$5" "$6" || return $?
+    fi
+    nps_save_path_to_file "$1" "$2" "$3" "$NPS_COPIED_ITEMS_FILE" || return $?
+    return 0
+}
+
+# $1 -- path
+# return zero if matched, non-zero otherwise
+function nps_file_matches() {
+    local flag=0
+    case $NPS_FILE_MATCHING_POLICY in
+	0) # no patterns assigned, default policy is to include all
+	    return 0
+	    ;;
+	1) # exclude policy, include by default
+	    flag=1
+	    if [ ${#NPS_EXCLUDE_BASH_PATTERN} -ne 0 ]; then
+		[[ $1 == $NPS_EXCLUDE_BASH_PATTERN ]] && flag=0
+	    elif [ ${#NPS_EXCLUDE_ITEMS["$1"]} -ne 0 ]; then
+		flag=0
+	    elif [ ${#NPS_EXCLUDE_REGEX_PATTERN} -ne 0 ]; then
+		[[ $1 =~ $NPS_EXCLUDE_REGEX_PATTERN ]] && flag=0
+	    fi
+	    if [ ${#NPS_INCLUDE_BASH_PATTERN} -ne 0 ]; then
+		[[ $1 == $NPS_INCLUDE_BASH_PATTERN ]] && flag=1
+	    elif [ ${#NPS_INCLUDE_ITEMS["$1"]} -ne 0 ]; then
+		flag=1
+	    elif [ ${#NPS_INCLUDE_REGEX_PATTERN} -ne 0 ]; then
+		[[ $1 =~ $NPS_INCLUDE_REGEX_PATTERN ]] && flag=1
+	    fi
+	    ;;
+	2) # include policy, exclude by default
+	    flag=0
+	    if [ ${#NPS_INCLUDE_BASH_PATTERN} -ne 0 ]; then
+		[[ $1 == $NPS_INCLUDE_BASH_PATTERN ]] && flag=1
+	    elif [ ${#NPS_INCLUDE_ITEMS["$1"]} -ne 0 ]; then
+		flag=1
+	    elif [ ${#NPS_INCLUDE_REGEX_PATTERN} -ne 0 ]; then
+		[[ $1 =~ $NPS_INCLUDE_REGEX_PATTERN ]] && flag=1
+	    fi
+	    if [ ${#NPS_EXCLUDE_BASH_PATTERN} -ne 0 ]; then
+		[[ $1 == $NPS_EXCLUDE_BASH_PATTERN ]] && flag=0
+	    elif [ ${#NPS_EXCLUDE_ITEMS["$1"]} -ne 0 ]; then
+		flag=0
+	    elif [ ${#NPS_EXCLUDE_REGEX_PATTERN} -ne 0 ]; then
+		[[ $1 =~ $NPS_EXCLUDE_REGEX_PATTERN ]] && flag=0
+	    fi
+	    ;;
+    esac
+    [ $flag -ne 0 ] && return 0
+    [ $NPS_VERBOSE_OUTPUT -gt 0 ] && echo "\`$1': skipped because of name mismatch"
+    return 1
+}
+
+# $1 -- path
+# return zero if matched, non-zero otherwise
+function nps_dir_matches() {
+    local flag=0
+    case $NPS_DIR_MATCHING_POLICY in
+	0) # no patterns assigned, default policy is to include all
+	    return 0
+	    ;;
+	1) # exclude policy, include by default
+	    flag=1
+	    if [ ${#NPS_EXCLUDE_ITEMS["$1"]} -ne 0 ]; then
+		flag=0
+	    fi
+	    if [ ${#NPS_INCLUDE_ITEMS["$1"]} -ne 0 ]; then
+		flag=1
+	    fi
+	    ;;
+	2) # include policy, exclude by default
+	    flag=0
+	    if [ ${#NPS_INCLUDE_ITEMS["$1"]} -ne 0 ]; then
+		flag=1
+	    fi
+	    if [ ${#NPS_EXCLUDE_ITEMS["$1"]} -ne 0 ]; then
+		flag=0
+	    fi
+	    ;;
+    esac
+    [ $flag -ne 0 ] && return 0
+    [ $NPS_VERBOSE_OUTPUT -gt 0 ] && echo "\`$1': skipped because of name mismatch"
+    return 1
+}
+
+# $1 -- source vt type
+# $2 -- source root path
+# $3 -- source relative path
+# $4 -- destination vt type
+# $5 -- destination root path
+# $6 -- destination relative path
+function nps_sync_dir() {
+    local rv=0
+    local save_rv=0
+    # copy dir contents
+    # newline can't be used in names!!!
+#    IFS=`echo -e "\n"`
+    local OIFS="$IFS"
+    IFS='
+'
+    #${nps_vtfuncs["$1_ls"]} "$2" "$3" | while read item_name; do # <- var assignement is not visible outside
+    # NB: a long list requires a lot of memory
+    local item_name
+    local items=`${nps_vtfuncs["$1_ls"]} "$2" "$3"` || { IFS="$OIFS"; return $?; }
+    local save_NPS_NPSYNC_ITEM_PATH="$NPS_NPSYNC_ITEM_PATH"
+    for item_name in $items; do
+	rv=0
+	local src_item_path=''
+	local dst_item_path=''
+	${nps_vtfuncs["$1_is_item_name"]} "$item_name" || rv=$?
+	[ $rv -eq 0 ] && { ${nps_vtfuncs["$4_is_item_name"]} "$item_name" || rv=$?; }
+	# assemble item path for npsyncinfo file
+	if [ $rv -eq 0 ] && [ -n "$NPS_NPSYNCINFO_FILE" ]; then
+	    ${nps_vtfuncs["npsync://_is_item_name"]} "$item_name" || rv=$?
+	    [ $rv -eq 0 ] && NPS_NPSYNC_ITEM_PATH=`npsync_item_path "$save_NPS_NPSYNC_ITEM_PATH" "$item_name"`
+	fi
+	if [ $rv -eq 0 ]; then
+	    src_item_path=`${nps_vtfuncs["$1_item_path"]} "$3" "$item_name"`
+	    dst_item_path=`${nps_vtfuncs["$4_item_path"]} "$6" "$item_name"`
+	    nps_sync_item "$1" "$2" "$src_item_path" "$4" "$5" "$dst_item_path" || rv=$?
+	fi
+	if [ $rv -ne 0 ]; then
+	    [ $save_rv -eq 0 ] && save_rv=$rv
+	    [ $NPS_IGNORE_ERRORS -eq 0 ] && break
+	fi
+    done
+    NPS_NPSYNC_ITEM_PATH="$save_NPS_NPSYNC_ITEM_PATH"
+    [ $save_rv -eq 0 -a $rv -ne 0 ] && save_rv=$rv
+    IFS="$OIFS"
+    return $save_rv
+}
+
+# $1 -- source vt type
+# $2 -- source root path
+# $3 -- source relative path
+# $4 -- destination vt type
+# $5 -- destination root path
+# $6 -- destination relative path
+function nps_sync_item() {
+    local rv=0
+    local rv2=0
+    local path=
+    local src_ftype=`${nps_vtfuncs["$1_get_ftype"]} "$2" "$3"` || rv=$?
+    if [ $rv -eq 0 ]; then
+	case "$src_ftype" in
+	    d) # copy directory recursively
+		path=`${nps_vtfuncs["$1_glue_paths"]} "$2" "$3"`
+		if nps_dir_matches "$path"; then
+		    if [ $NPS_DO_NESTED_COPYING -eq 0 ]; then
+			nps_perr $NPS_NESTED_DIR "$1" "$2" "$3"
+			rv=$NPS_NESTED_DIR
+
+		    elif [ $NPS_MAX_NESTING_LEVEL -gt 0 -a $NPS_NESTING_LEVEL -ge $NPS_MAX_NESTING_LEVEL ]; then
+			nps_perr $NPS_TOO_DEEP_NESTING "$1" "$2" "$3"
+			rv=$NPS_TOO_DEEP_NESTING
+
+		    else
+			local sync_dir_attributes=0
+			local sync_dir_items=0
+			if ! ${nps_vtfuncs["$4_exists"]} "$5" "$6"; then
+			    if [ $NPS_CREATE_ABSENT_DIR -ne 0 ]; then
+				[ $NPS_VERBOSE_OUTPUT -gt 0 ] && echo "absent destination directory "`nps_format_path "$4" "$5" "$6"`", source directory "`nps_format_path "$1" "$2" "$3"`
+				if [ $NPS_INTERACTIVE_RUN -eq 0 ] || nps_user_agreed "Create directory "`nps_format_path "$4" "$5" "$6"`"?"; then
+				    nps_make_dir "$1" "$2" "$3" "$4" "$5" "$6" || rv=$?
+				    [ $rv -eq 0 ] && sync_dir_items=1
+				    # no directory created in test mode
+				    if [ $NPS_TEST_MODE -eq 0 -a $rv -eq 0 ]; then
+					_NPS_SYNCED_ATTRS['mode']=1
+					_NPS_SYNCED_ATTRS['mtime']=1
+					_NPS_SYNCED_ATTRS['owner']=0
+					[ ${#NPS_SYNCED_DIR_ATTRS['owner']} -ne 0 ] && _NPS_SYNCED_ATTRS['owner']=${NPS_SYNCED_DIR_ATTRS['owner']}
+					sync_dir_attributes=1
+				    fi
+				fi
+			    else
+				nps_perr $NPS_DST_ITEM_DOES_NOT_EXIST "$4" "$5" "$6"
+				rv=$NPS_DST_ITEM_DOES_NOT_EXIST
+			    fi
+			else
+			    local dst_ftype=`${nps_vtfuncs["$4_get_ftype"]} "$5" "$6"` || rv=$?
+			    if [ $rv -eq 0 ]; then
+				if [ "$dst_ftype" != "d" ]; then
+				    nps_perr $NPS_IS_NOT_DIRECTORY "$4" "$5" "$6"
+				    rv=$NPS_IS_NOT_DIRECTORY
+				else
+				    nps_copy_SYNCED_DIR_ATTRS && sync_dir_attributes=2
+				    sync_dir_items=1
+				fi
+			    fi
+			fi
+			if [ $rv -eq 0 ]; then
+			    NPS_FILE_COPIED_FLAG=0
+			    : $[NPS_NESTING_LEVEL+=1]
+			    [ $sync_dir_items -ne 0 ] && { nps_sync_dir "$1" "$2" "$3" "$4" "$5" "$6" || rv=$?; }
+			    : $[NPS_NESTING_LEVEL-=1]
+			    [ $NPS_FILE_COPIED_FLAG -ne 0 ] && _NPS_SYNCED_ATTRS['mtime']=1
+			    # sync dir attrs even if copying of dir contents
+                            # failed (so all upper dirs are updated properly)
+			    if [ $sync_dir_attributes -ne 0 ]; then
+				local save_INTERACTIVE_RUN=$NPS_INTERACTIVE_RUN # save global var
+			        # skip questions if directory has been created
+				[ $sync_dir_attributes -eq 1 ] && NPS_INTERACTIVE_RUN=0
+				nps_sync_attrs "$1" "$2" "$3" "$4" "$5" "$6" "$NPS_DIR_CKS" "$NPS_DIR_CKS_TYPE" "d" || rv2=$?
+				NPS_INTERACTIVE_RUN=$save_INTERACTIVE_RUN # restore global var
+			    fi
+			    NPS_FILE_COPIED_FLAG=0
+			    [ $rv2 -ne 0 -a $rv -eq 0 ] && rv=$rv2
+			fi
+		    fi
+		fi
+		;;
+	    -) # copy regular file
+		path=`${nps_vtfuncs["$1_glue_paths"]} "$2" "$3"`
+		if nps_file_matches "$path"; then
+		    nps_sync_file "$1" "$2" "$3" "$4" "$5" "$6" || rv=$?
+		fi
+		;;
+	    *)
+		nps_perr $NPS_IS_NOT_REGULAR "$1" "$2" "$3"
+		rv=$NPS_IS_NOT_REGULAR
+		;;
+	esac
+    fi
+    return $rv
+}
+
+#############################################################################
+# general catalogue functions
+
+# load npsync:// file
+# $1 -- path to npsync:// file
+function nps_load_npsync() {
+    local rv=0
+    local save_rv=0
+    local num=1
+    local path=
+    local item=
+    if [ -a "$1" ]; then
+	while read -r line; do
+	    if [[ $line =~ ^([^[:space:]]+)[[:space:]]+([^[:space:]]+)[[:space:]]+([^[:space:]]+)[[:space:]]+([^[:space:]]+)[[:space:]]+([^[:space:]]+)[[:space:]]+([^[:space:]]+)[[:space:]]+([^[:space:]]+)[[:space:]]+\`(.+)\'$ ]]; then
+		item="${BASH_REMATCH[8]}"
+		if [ "npsync://" == "$NPS_SRC_VTTYPE" -a "$1" == "$NPS_SRC_PATH" ]; then
+		    nps_src_file_type["$item"]="${BASH_REMATCH[1]}"
+		    nps_src_file_cks_type["$item"]="${BASH_REMATCH[2]}"
+		    nps_src_file_cks["$item"]="${BASH_REMATCH[3]}"
+		    nps_src_file_mode["$item"]="${BASH_REMATCH[4]}"
+		    nps_src_file_owner["$item"]="${BASH_REMATCH[5]}"
+		    nps_src_file_size["$item"]="${BASH_REMATCH[6]}"
+		    nps_src_file_mtime["$item"]="${BASH_REMATCH[7]}"
+
+		    # src and dst can use different decorations and separators
+		    # in paths, we should handle them correctly
+		    # fill src -> dst path map,
+		    # to use it as cache in nps_sync_src_npsync() later
+		    # and speed up dst path assembling
+		    path=`${nps_vtfuncs["${NPS_SRC_VTTYPE}_leaf_path"]} "$item"`
+		    if [ -n "$path" ] && [ ${#nps_src_dst_path_map["$path"]} -eq 0 ]; then
+			nps_src_dst_path_map["$path"]=`nps_convert_src_to_dst_path "$NPS_SRC_VTTYPE" "$path" "$NPS_DST_VTTYPE"` || rv=$?
+		    fi
+		else
+		    nps_dst_file_type["$item"]="${BASH_REMATCH[1]}"
+		    nps_dst_file_cks_type["$item"]="${BASH_REMATCH[2]}"
+		    nps_dst_file_cks["$item"]="${BASH_REMATCH[3]}"
+		    nps_dst_file_mode["$item"]="${BASH_REMATCH[4]}"
+		    nps_dst_file_owner["$item"]="${BASH_REMATCH[5]}"
+		    nps_dst_file_size["$item"]="${BASH_REMATCH[6]}"
+		    nps_dst_file_mtime["$item"]="${BASH_REMATCH[7]}"
+		fi
+	    else
+		nps_perr $NPS_CORRUPTED_NPSYNC "$1" "$num" "$line"
+		rv=$NPS_CORRUPTED_NPSYNC
+	    fi
+	    if [ $rv -ne 0 ]; then
+		[ $save_rv -eq 0 ] && save_rv=$rv
+		rv=0
+		[ $NPS_IGNORE_ERRORS -eq 0 ] && return $save_rv
+	    fi
+	    : $[num+=1]
+	done < "$1"
+	rv=$?
+	[ $save_rv -eq 0 ] && save_rv=$rv
+    fi
+    return $save_rv
+}
+
+# synchronize source npsync:// file
+# $1 -- source vt type
+# $2 -- source root path
+# $3 -- destination vt type
+# $4 -- destination root path
+function nps_sync_src_npsync() {
+    local rv=0
+    local save_rv=0
+    local item_path=
+    local item_name=
+    local item=
+
+    for key in "${!nps_src_file_type[@]}"; do
+	# src and dst can use different decorations and separators in paths,
+	# we should handle them correctly
+	item_path=`${nps_vtfuncs["$1_leaf_path"]} "$key"`
+	if [ -n "$item_path"  ]; then
+	    item_path="${nps_src_dst_path_map[$item_path]}"
+	    [ -z "$item_path" ] && rv=$NPS_UNACCEPTABLE_NAME
+	fi
+	item_name=`${nps_vtfuncs["$1_leaf_item"]} "$key"`
+	NPS_NPSYNC_ITEM_PATH="$key"
+	if [ $rv -eq 0 ]; then
+	    ${nps_vtfuncs["$3_is_item_name"]} "$item_name" || rv=$?
+	fi
+	if [ $rv -eq 0 ]; then
+	    item=`${nps_vtfuncs["$3_item_path"]} "$item_path" "$item_name"`
+	    nps_sync_item "$1" "$2" "$key" "$3" "$4" "$item" || rv=$?
+	else
+	    [ $NPS_VERBOSE_OUTPUT -gt 0 ] && echo "\`$key': skipped because of unacceptable name"
+	fi
+	if [ $rv -ne 0 ]; then
+	    [ $NPS_IGNORE_ERRORS -eq 0 ] && return $rv
+	    [ $save_rv -eq 0 ] && save_rv=$rv
+	fi
+    done
+    return $save_rv
+}
+
+# save a npsync record to given file
+# $1 -- file to save record
+# $2 -- file type
+# $3 -- checksum type
+# $4 -- checksum
+# $5 -- mode
+# $6 -- owner
+# $7 -- size
+# $8 -- mtime
+# $9 -- item path
+function nps_save_npsync_record() {
+    echo "$2 $3 $4 $5 $6 $7 $8 \`$9'" >> "$1" || nps_failed "echo $2 $3 $4 $5 $6 $7 $8 \`$9' >> \"$1\""
+    return $?
+}
+
+# save destination npsync:// file
+# $1 -- file to save
+function nps_save_dst_npsync() {
+    local rv=0
+    for key in "${!nps_dst_file_type[@]}"; do
+	nps_save_npsync_record "$1" "${nps_dst_file_type[$key]}" "${nps_dst_file_cks_type[$key]}" "${nps_dst_file_cks[$key]}" "${nps_dst_file_mode[$key]}" "${nps_dst_file_owner[$key]}" "${nps_dst_file_size[$key]}" "${nps_dst_file_mtime[$key]}" "$key" || rv=$?
+	[ $rv -ne 0 -a $NPS_IGNORE_ERRORS -eq 0 ] && return $rv
+    done
+    return $rv
+}
+
+#############################################################################
+# most of global variables
+
+NPS_RV=0
+NPS_SAVE_RV=0
+
+unset NPS_SOURCES
+declare -a NPS_SOURCES
+NPS_DST=
+NPS_CREATE_ABSENT_DIR=0
+NPS_CREATE_ABSENT_FILE=0
+NPS_NPSYNCINFO_FILE=
+NPS_NPSYNC_ITEM_PATH=
+NPS_IGNORE_ERRORS=0
+NPS_VERBOSE_OUTPUT=0
+NPS_DO_NESTED_COPYING=0
+NPS_NESTING_LEVEL=0
+NPS_MAX_NESTING_LEVEL=0
+NPS_TEST_MODE=0
+NPS_COPIED_ITEMS_FILE=
+NPS_SYNCED_ITEMS_FILE=
+unset NPS_DIFFERENCE_CRITERIA
+declare -A NPS_DIFFERENCE_CRITERIA
+NPS_DIFFERENCE_CRITERIA['mtime']=0
+NPS_DIFFERENCE_CRITERIA['size']=0
+NPS_DIFFERENCE_CRITERIA['cks']=0
+unset NPS_SYNCED_DIR_ATTRS
+declare -A NPS_SYNCED_DIR_ATTRS
+unset NPS_SYNCED_FILE_ATTRS
+declare -A NPS_SYNCED_FILE_ATTRS
+unset _NPS_SYNCED_ATTRS
+declare -A _NPS_SYNCED_ATTRS
+NPS_EXCLUDE_BASH_PATTERN=
+NPS_EXCLUDE_REGEX_PATTERN=
+unset NPS_EXCLUDE_ITEMS
+declare -A NPS_EXCLUDE_ITEMS
+NPS_INCLUDE_BASH_PATTERN=
+NPS_INCLUDE_REGEX_PATTERN=
+unset NPS_INCLUDE_ITEMS
+declare -A NPS_INCLUDE_ITEMS
+NPS_FILE_MATCHING_POLICY=0
+NPS_DIR_MATCHING_POLICY=0
+NPS_INTERACTIVE_RUN=0
+
+#############################################################################
+# print destination dir and return index of destination in nps_vttypes.
+# Hardcoded indices:
+#   0: posix
+#   1: rfio
+function nps_get_vtdir() {
+    local index=0
+    for vttype in ${nps_vttypes[*]}; do
+	if [ "${1:0:${#vttype}}" == "${vttype}" ]; then
+	    echo "${1:${#vttype}}"
+	    return $index
+	fi
+	: $[index+=1]
+    done
+    if [ "${1:0:${#CASTOR_ROOT}}" == "$CASTOR_ROOT" -a "${nps_vttypes[1]}" == 'rfio://' ]; then
+	echo "$1"
+	return 1
+    fi
+    echo "$1"
+    return 0
+}
+
+#############################################################################
+# load npsync interface files
+
+if [ "${#NPS_INTERFACE_FILES}" -ne 0 ]; then
+    NPS_OIFS="$IFS"
+    IFS=':'
+    for p in $NPS_INTERFACE_FILES; do
+	[ "${#p}" -eq 0 ] && continue
+	source "$p" || exit $?
+    done
+    IFS="$NPS_OIFS"
+fi
+
+#############################################################################
+# command line args parsing
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+	-a) NPS_DO_NESTED_COPYING=1
+	    NPS_CREATE_ABSENT_DIR=1
+	    NPS_CREATE_ABSENT_FILE=1
+	    NPS_DIFFERENCE_CRITERIA['mtime']=1
+	    NPS_DIFFERENCE_CRITERIA['size']=1
+	    ;;
+	-c) NPS_CREATE_ABSENT_DIR=1
+	    NPS_CREATE_ABSENT_FILE=1
+	    ;;
+	--copied) [ -z "$2" ] && { nps_perr $NPS_WRONG_ARGS "$1"; exit $NPS_WRONG_ARGS; }
+	    NPS_COPIED_ITEMS_FILE="$2"
+	    shift
+	    ;;
+	--create-dirs) NPS_CREATE_ABSENT_DIR=1
+	    ;;
+	--create-files) NPS_CREATE_ABSENT_FILE=1
+	    ;;
+	-d) [ $# -lt 2 ] && { nps_perr $NPS_WRONG_ARGS "$1"; exit $NPS_WRONG_ARGS; }
+	    NPS_OIFS="$IFS"
+	    IFS=','
+	    for n in $2; do
+		case $n in
+		    mtime|size|cks)
+			NPS_DIFFERENCE_CRITERIA["$n"]=1
+			;;
+		    *)
+			nps_perr $NPS_WRONG_ARGS "$1 $2"
+			exit $NPS_WRONG_ARGS
+			;;
+		esac
+	    done
+	    IFS="$NPS_OIFS"
+	    shift
+	    ;;
+	--exclude)
+	    [ -z "$2" ] && { nps_perr $NPS_WRONG_ARGS "$1"; exit $NPS_WRONG_ARGS; }
+	    [ -n "$NPS_EXCLUDE_BASH_PATTERN" ] && { nps_perr $NPS_WRONG_ARGS "$1" "$2"; exit $NPS_WRONG_ARGS; }
+	    NPS_EXCLUDE_BASH_PATTERN="$2"
+	    [ $NPS_FILE_MATCHING_POLICY -eq 0 ] && NPS_FILE_MATCHING_POLICY=1
+	    shift
+	    ;;
+	--exclude-file)
+	    [ -z "$2" ] && { nps_perr $NPS_WRONG_ARGS "$1"; exit $NPS_WRONG_ARGS; }
+	    [ -f "$2" -a -r "$2" ] || { nps_perr $NPS_WRONG_ARGS "$1" "$2"; exit $NPS_WRONG_ARGS; }
+	    NPS_OIFS="$IFS"
+	    IFS='
+'
+	    while read -r line; do
+		NPS_EXCLUDE_ITEMS["$line"]=1
+	    done <"$2" || exit $?
+	    IFS="$NPS_OIFS"
+	    [ $NPS_FILE_MATCHING_POLICY -eq 0 ] && NPS_FILE_MATCHING_POLICY=1
+	    [ $NPS_DIR_MATCHING_POLICY -eq 0 ] && NPS_DIR_MATCHING_POLICY=1
+	    shift
+	    ;;
+	--exclude-regex)
+	    [ -z "$2" ] && { nps_perr $NPS_WRONG_ARGS "$1"; exit $NPS_WRONG_ARGS; }
+	    [ -n "$NPS_EXCLUDE_REGEX_PATTERN" ] && { nps_perr $NPS_WRONG_ARGS "$1" "$2"; exit $NPS_WRONG_ARGS; }
+	    NPS_EXCLUDE_REGEX_PATTERN="$2"
+	    [ $NPS_FILE_MATCHING_POLICY -eq 0 ] && NPS_FILE_MATCHING_POLICY=1
+	    shift
+	    ;;
+	-f) NPS_IGNORE_ERRORS=1
+	    ;;
+	-h) nps_usage "$NPS_UTIL_NAME"
+	    #echo $NPS_OPTIONS_HELP
+	    exit 0
+	    ;;
+	-i) NPS_INTERACTIVE_RUN=1
+	    ;;
+	--include)
+	    [ -z "$2" ] && { nps_perr $NPS_WRONG_ARGS "$1"; exit $NPS_WRONG_ARGS; }
+	    [ -n "$NPS_INCLUDE_BASH_PATTERN" ] && { nps_perr $NPS_WRONG_ARGS "$1" "$2"; exit $NPS_WRONG_ARGS; }
+	    NPS_INCLUDE_BASH_PATTERN="$2"
+	    [ $NPS_FILE_MATCHING_POLICY -eq 0 ] && NPS_FILE_MATCHING_POLICY=2
+	    shift
+	    ;;
+	--include-file)
+	    [ -z "$2" ] && { nps_perr $NPS_WRONG_ARGS "$1"; exit $NPS_WRONG_ARGS; }
+	    [ -f "$2" -a -r "$2" ] || { nps_perr $NPS_WRONG_ARGS "$1" "$2"; exit $NPS_WRONG_ARGS; }
+	    NPS_OIFS="$IFS"
+	    IFS='
+'
+	    while read -r line; do
+		NPS_INCLUDE_ITEMS["$line"]=1
+	    done <"$2" || exit $?
+	    IFS="$NPS_OIFS"
+	    [ $NPS_FILE_MATCHING_POLICY -eq 0 ] && NPS_FILE_MATCHING_POLICY=2
+	    [ $NPS_DIR_MATCHING_POLICY -eq 0 ] && NPS_DIR_MATCHING_POLICY=2
+	    shift
+	    ;;
+	--include-regex)
+	    [ -z "$2" ] && { nps_perr $NPS_WRONG_ARGS "$1"; exit $NPS_WRONG_ARGS; }
+	    [ -n "$NPS_INCLUDE_REGEX_PATTERN" ] && { nps_perr $NPS_WRONG_ARGS "$1" "$2"; exit $NPS_WRONG_ARGS; }
+	    NPS_INCLUDE_REGEX_PATTERN="$2"
+	    [ $NPS_FILE_MATCHING_POLICY -eq 0 ] && NPS_FILE_MATCHING_POLICY=2
+	    shift
+	    ;;
+	-l) [ $# -lt 2 ] && { nps_perr $NPS_WRONG_ARGS "$1"; exit $NPS_WRONG_ARGS; }
+	    NPS_MAX_NESTING_LEVEL="$2"
+	    [ $NPS_MAX_NESTING_LEVEL -lt 0 ] && { nps_perr $NPS_WRONG_ARGS "$NPS_MAX_NESTING_LEVEL"; exit $NPS_WRONG_ARGS; }
+	    shift
+	    ;;
+	--npsync-interface)
+	    source "$2" || exit $?
+	    shift
+	    ;;
+	-p) [ -z "$2" -o $NPS_TEST_MODE -ne 0 ] && { nps_perr $NPS_WRONG_ARGS "$1"; exit $NPS_WRONG_ARGS; }
+	    NPS_NPSYNCINFO_FILE="$2"
+	    shift
+	    ;;
+	-r) NPS_DO_NESTED_COPYING=1
+	    ;;
+	-s) [ $# -lt 2 ] && { nps_perr $NPS_WRONG_ARGS "$1"; exit $NPS_WRONG_ARGS; }
+	    NPS_OIFS="$IFS"
+	    IFS=','
+	    for n in $2; do
+		case $n in
+		    mode|mtime|owner)
+			NPS_SYNCED_DIR_ATTRS["$n"]=1
+			NPS_SYNCED_FILE_ATTRS["$n"]=1
+			;;
+		    *)
+			nps_perr $NPS_WRONG_ARGS "$1 $2"
+			exit $NPS_WRONG_ARGS
+			;;
+		esac
+	    done
+	    IFS="$NPS_OIFS"
+	    shift
+	    ;;
+	--sync-dir-attrs) [ $# -lt 2 ] && { nps_perr $NPS_WRONG_ARGS "$1"; exit $NPS_WRONG_ARGS; }
+	    NPS_OIFS="$IFS"
+	    IFS=','
+	    for n in $2; do
+		case $n in
+		    mode|mtime|owner)
+			NPS_SYNCED_DIR_ATTRS["$n"]=1
+			;;
+		    *)
+			nps_perr $NPS_WRONG_ARGS "$1 $2"
+			exit $NPS_WRONG_ARGS
+			;;
+		esac
+	    done
+	    IFS="$NPS_OIFS"
+	    shift
+	    ;;
+	--sync-file-attrs) [ $# -lt 2 ] && { nps_perr $NPS_WRONG_ARGS "$1"; exit $NPS_WRONG_ARGS; }
+	    NPS_OIFS="$IFS"
+	    IFS=','
+	    for n in $2; do
+		case $n in
+		    mode|mtime|owner)
+			NPS_SYNCED_FILE_ATTRS["$n"]=1
+			;;
+		    *)
+			nps_perr $NPS_WRONG_ARGS "$1 $2"
+			exit $NPS_WRONG_ARGS
+			;;
+		esac
+	    done
+	    IFS="$NPS_OIFS"
+	    shift
+	    ;;
+	--synced) [ -z "$2" ] && { nps_perr $NPS_WRONG_ARGS "$1"; exit $NPS_WRONG_ARGS; }
+	    NPS_SYNCED_ITEMS_FILE="$2"
+	    shift
+	    ;;
+	-t) [ "${#NPS_NPSYNCINFO_FILE}" -ne 0 ] && { nps_perr $NPS_WRONG_ARGS "$1"; exit $NPS_WRONG_ARGS; }
+	    NPS_TEST_MODE=1
+	    ;;
+	-v) let $((NPS_VERBOSE_OUTPUT+=1))
+	    ;;
+	--version) echo "$NPS_UTIL_NAME $[(NPS_UTIL_VERSION&0xff0000)>>16].$[(NPS_UTIL_VERSION&0xff00)>>8].$[(NPS_UTIL_VERSION&0xff)]"
+	    echo "$NPS_UTIL_LICENSE"
+	    exit 0
+	    ;;
+	-*) nps_perr $NPS_WRONG_ARGS "$1"; exit $NPS_WRONG_ARGS;
+	    ;;
+	*)
+	    if [ -z "$NPS_DST" ]; then
+		NPS_DST="$1"
+	    else
+		NPS_SOURCES[${#NPS_SOURCES[*]}]="$NPS_DST"
+		NPS_DST="$1"
+		for name in "${NPS_SOURCES[*]}"; do
+		    if [ "$name" == "$NPS_DST" ]; then
+			nps_perr $NPS_WRONG_ARGS
+			exit $NPS_WRONG_ARGS
+		    fi
+		done
+	    fi
+	    ;;
+    esac
+    shift
+done
+
+[ ${#NPS_SOURCES[*]} -eq 0 ] && { nps_perr $NPS_WRONG_ARGS; exit $NPS_WRONG_ARGS; }
+[ -z "$NPS_DST" ] && { nps_perr $NPS_WRONG_ARGS; exit $NPS_WRONG_ARGS; }
+#############################################################################
+# check DST
+
+# don't touch below
+NPS_DST_PATH=`nps_get_vtdir "$NPS_DST"`
+NPS_DST_VTTYPE="${nps_vttypes[$?]}"
+# don't touch above
+
+NPS_DST_PATH=`${nps_vtfuncs["${NPS_DST_VTTYPE}_rm_separator"]} "$NPS_DST_PATH"`
+
+# `declare -g' is not implemented in bash version <= 4.1
+if [ "${NPS_DST_VTTYPE}" == 'npsync://' ]; then
+    # file name -> file type
+    unset nps_dst_file_type
+    declare -A nps_dst_file_type
+
+    # file name -> type of checksum
+    unset nps_dst_file_cks_type
+    declare -A nps_dst_file_cks_type
+
+    # file name -> checksum
+    unset nps_dst_file_cks
+    declare -A nps_dst_file_cks
+
+    # file name -> mode in octal
+    unset nps_dst_file_mode
+    declare -A nps_dst_file_mode
+
+    # file name -> owner
+    unset nps_dst_file_owner
+    declare -A nps_dst_file_owner
+
+    # file name -> size
+    unset nps_dst_file_size
+    declare -A nps_dst_file_size
+
+    # file name -> mtime
+    unset nps_dst_file_mtime
+    declare -A nps_dst_file_mtime
+
+    nps_load_npsync "$NPS_DST_PATH" || NPS_SAVE_RV=$?
+    [ $NPS_SAVE_RV -ne 0 -a $NPS_IGNORE_ERRORS -eq 0 ] && exit $NPS_SAVE_RV
+else
+    out=`${nps_vtfuncs["${NPS_DST_VTTYPE}_get_ftype"]} "$NPS_DST_PATH" ""` || exit $?
+    if [ "$out" != "d" ]; then
+	nps_perr $NPS_IS_NOT_DIRECTORY "$NPS_DST_VTTYPE" "$NPS_DST_PATH"
+	exit $NPS_IS_NOT_DIRECTORY
+    fi
+fi
+
+# files can't be copied from a catalogue
+if [ $NPS_TEST_MODE -eq 0 ] && [ "$NPS_DST_VTTYPE" != 'npsync://' ]; then
+    flag=$NPS_CREATE_ABSENT_FILE
+    [ $flag -eq 0 ] && for d in "${!NPS_DIFFERENCE_CRITERIA[@]}"; do
+	[ ${NPS_DIFFERENCE_CRITERIA["$d"]} -ne 0 ] && { flag=${NPS_DIFFERENCE_CRITERIA["$d"]}; break; }
+    done
+    unset NPS_SRC_PATH
+    [ $flag -ne 0 ] && for name in "${NPS_SOURCES[*]}"; do
+
+	# don't touch below
+	# get storage type and path
+	NPS_SRC_PATH=`nps_get_vtdir "$name"`
+	NPS_SRC_VTTYPE="${nps_vttypes[$?]}"
+	# don't touch above
+
+	if [ "$NPS_SRC_VTTYPE" == 'npsync://' ]; then
+	    nps_perr $NPS_COPY_FILE_FROM_CATALOGUE "$NPS_SRC_VTTYPE" "$NPS_SRC_PATH"
+	    exit $NPS_COPY_FILE_FROM_CATALOGUE
+	fi
+    done
+    unset NPS_SRC_PATH
+fi
+
+# destination npsync modification flag
+NPS_DST_NPSYNC_MODIFIED=0
+
+#############################################################################
+# copying
+
+# flag to update mtime of parent directory after file copying
+NPS_FILE_COPIED_FLAG=0
+
+for name in "${NPS_SOURCES[*]}"; do
+    unset NPS_SRC_PATH
+
+    # don't touch below
+    # get storage type and path
+    NPS_SRC_PATH=`nps_get_vtdir "$name"`
+    NPS_SRC_VTTYPE="${nps_vttypes[$?]}"
+    # don't touch above
+
+    NPS_SRC_ROOT_PATH=`${nps_vtfuncs["${NPS_SRC_VTTYPE}_leaf_path"]} "$NPS_SRC_PATH"`
+
+    NPS_RV=0
+    # `declare -g' is not implemented in bash version <= 4.1
+    if [ "$NPS_SRC_VTTYPE" == 'npsync://' ]; then
+        # file name -> file type
+	unset nps_src_file_type
+	declare -A nps_src_file_type
+
+        # file name -> type of checksum
+	unset nps_src_file_cks_type
+	declare -A nps_src_file_cks_type
+
+        # file name -> checksum
+	unset nps_src_file_cks
+	declare -A nps_src_file_cks
+
+        # file name -> mode in octal
+	unset nps_src_file_mode
+	declare -A nps_src_file_mode
+
+        # file name -> owner
+	unset nps_src_file_owner
+	declare -A nps_src_file_owner
+
+        # file name -> size
+	unset nps_src_file_size
+	declare -A nps_src_file_size
+
+        # file name -> size
+	unset nps_src_file_size
+	declare -A nps_src_file_size
+
+        # file name -> mtime
+	unset nps_src_file_mtime
+	declare -A nps_src_file_mtime
+
+	unset nps_src_dst_path_map
+	declare -A nps_src_dst_path_map
+	nps_load_npsync "$NPS_SRC_PATH" || NPS_RV=$?
+
+	if [ $NPS_RV -eq 0 ]; then
+	    nps_sync_src_npsync "$NPS_SRC_VTTYPE" "$NPS_SRC_PATH" "$NPS_DST_VTTYPE" "$NPS_DST_PATH" || NPS_RV=$?
+	fi
+    else
+	NPS_SRC_NAME=`${nps_vtfuncs["${NPS_SRC_VTTYPE}_leaf_item"]} "$NPS_SRC_PATH"`
+	NPS_NPSYNC_ITEM_PATH="$NPS_SRC_NAME"
+	[ $NPS_RV -eq 0 ] && { nps_sync_item "$NPS_SRC_VTTYPE" "$NPS_SRC_ROOT_PATH" "$NPS_SRC_NAME" "$NPS_DST_VTTYPE" "$NPS_DST_PATH" "$NPS_SRC_NAME" || NPS_RV=$?; }
+    fi
+    unset NPS_SRC_PATH
+    if [ $NPS_RV -ne 0 ]; then
+	[ $NPS_SAVE_RV -eq 0 ] && NPS_SAVE_RV=$NPS_RV
+	[ $NPS_IGNORE_ERRORS -eq 0 ] && break
+    fi
+done
+
+# save destination npsync:// file if required
+if [ $NPS_DST_NPSYNC_MODIFIED -ne 0 ]; then
+    nps_save_dst_npsync "$NPS_DST_PATH" || NPS_RV=$?
+    if [ $NPS_RV -ne 0 ]; then
+	[ $NPS_SAVE_RV -eq 0 ] && NPS_SAVE_RV=$NPS_RV
+    fi
+fi
+
+exit $NPS_SAVE_RV

@@ -1,0 +1,532 @@
+Content-type: text/html
+
+<HTML><HEAD><TITLE>Manpage of NPSYNC</TITLE>
+</HEAD><BODY>
+<H1>NPSYNC</H1>
+Section: User Commands (1)<BR>Updated: 2015<BR><A HREF="#index">Index</A>
+<A HREF="/man/man2html">Return to Main Contents</A><HR>
+
+
+<A NAME="lbAB">&nbsp;</A>
+<H2>NAME</H2>
+
+npsync - synchronize files and directories
+<A NAME="lbAC">&nbsp;</A>
+<H2>SYNOPSIS</H2>
+
+<P>
+
+<B>npsync</B> [<I>OPTION</I>]... <I>SRC</I>... <I>DST</I>
+<A NAME="lbAD">&nbsp;</A>
+<H2>DESCRIPTION</H2>
+
+<P>
+
+Synchronize <I>SRC</I>(s) and <I>DST</I> on storages with non-POSIX interfaces.
+<P>
+
+<I>SRC</I>(s) and <I>DST</I> should exist (see description of storage type `<A HREF="npsync://'">npsync://'</A> for exception).
+<I>DST</I> is parent for <I>SRC</I> copy.
+Use option <B>-h</B> to print available storage interfaces.
+<P>
+
+Interface utilities used to access storage(s) are run with <I>timeout</I>.
+SIGTERM is sent in 10 minutes, SIGKILL is sent in 15 minutes of utility execution wall-clock time.
+<A NAME="lbAE">&nbsp;</A>
+<H2>OPTIONS</H2>
+
+<P>
+
+<DL COMPACT>
+<DT><B>-a</B><DD>
+Archive mode, the same as `-r -c -d mtime,size'.
+<DT><B>-c</B><DD>
+The same as `--create-dirs --create-files'.
+<DT><B>--copied</B> <I>FILE</I><DD>
+Add to <I>FILE</I> names of source files and directories (to be) copied to <I>DST</I>.
+<DT><B>--create-dirs</B><DD>
+Create absent destination directories existing in source.
+<DT><B>--create-files</B><DD>
+Create absent destination files existing in source.
+<DT><B>-d</B> <I>CRITERIA</I><DD>
+Set difference criteria for source-destination file comparison.
+<I>CRITERIA</I> is a comma-separated list of words (without spaces): <I>mtime</I>, <I>size</I>, <I>cks</I>.
+<DL COMPACT><DT><DD>
+<DL COMPACT>
+<DT>  * <I>mtime</I><DD>
+if destination modification time older.
+<DT>  * <I>size</I><DD>
+is file sizes are equal. If mtime has been tested, then size is compared only if mtimes are equal.
+<DT>  * <I>cks</I><DD>
+is file checksums are equal.
+</DL>
+</DL>
+
+<DT><DD>
+Default list is empty, so no files are compared.
+<DT><B>--exclude</B> <I>PATTERN</I><DD>
+Exclude source files matching <I><A HREF="/man/man2html?1+bash">bash</A></I>(1) <I>PATTERN</I>.
+<DT><B>--exclude-file</B> <I>FILE</I><DD>
+Exclude source items read from <I>FILE</I>.
+<DT><B>--exclude-regex</B> <I>PATTERN</I><DD>
+Exclude source files matching <I><A HREF="/man/man2html?3+regex">regex</A></I>(3) <I>PATTERN</I>.
+<DT><B>-f</B><DD>
+Force execution, ignore errors.
+<DT><B>-i</B><DD>
+Prompt before every modification.
+<DT><B>-h</B><DD>
+Print help and exit.
+<DT><B>--include</B> <I>PATTERN</I><DD>
+Include source files matching <I><A HREF="/man/man2html?1+bash">bash</A></I>(1) <I>PATTERN</I>.
+<DT><B>--include-file</B> <I>FILE</I><DD>
+Include source items read from <I>FILE</I>.
+<DT><B>--include-regex</B> <I>PATTERN</I><DD>
+Include source files matching <I><A HREF="/man/man2html?3+regex">regex</A></I>(3) <I>PATTERN</I>.
+<DT><B>-l</B> <I>LEVEL</I><DD>
+Copy nested directories with <I>LEVEL</I> as the maximum level of nesting
+(by default the number is zero i.e. unlimited).
+<DT><B>--npsync-interface</B> <I>FILE</I><DD>
+Load npsync storage interface from <I>FILE</I>.
+<DT><B>-p</B> <I>FILE</I><DD>
+Add source file and directory attributes to <I>FILE</I>.
+The <I>FILE</I> can be used later with prefix `<A HREF="npsync://'">npsync://'</A> as source or destination.
+<DT><DD>
+NB: The option turns on checksum calculation for all source files.
+<DT><DD>
+NB2: The option can't be used simultaneously with `-t'.
+<DT><B>-r</B><DD>
+Synchronize and/or copy nested directories recursively.
+<DT><B>-s</B> <I>ATTRS</I><DD>
+The same as
+<BR>
+
+`--sync-dir-attrs <I>ATTRS</I> --sync-file-attrs <I>ATTRS</I>'.
+<DT><B>--sync-dir-attrs</B> <I>ATTRS</I><DD>
+Synchronize directory attributes in destination with source.
+<I>ATTRS</I> is a comma-separated list of words (without spaces): <I>mode</I>, <I>mtime</I>, <I>owner</I>.
+<DL COMPACT><DT><DD>
+<DL COMPACT>
+<DT>  * <I>mode</I><DD>
+file mode bits.
+<DT>  * <I>mtime</I><DD>
+modification time.
+<DT>  * <I>owner</I><DD>
+uid and gid.
+</DL>
+</DL>
+
+<DT><B>--sync-file-attrs</B> <I>ATTRS</I><DD>
+Synchronize file attributes in destination with source.
+<I>ATTRS</I> is a comma-separated list of words (without spaces): <I>mode</I>, <I>mtime</I>, <I>owner</I>.
+<DL COMPACT><DT><DD>
+<DL COMPACT>
+<DT>  * <I>mode</I><DD>
+file mode bits.
+<DT>  * <I>mtime</I><DD>
+modification time.
+<DT>  * <I>owner</I><DD>
+uid and gid.
+</DL>
+</DL>
+
+<DT><B>--synced</B> <I>FILE</I><DD>
+Add to <I>FILE</I> names of source files and directories with attributes
+(to be) synchronized in destination. List generated in test
+mode (files and dirs with attrs to be synced) may differ since:
+<DL COMPACT><DT><DD>
+<DL COMPACT>
+<DT>  *<DD>
+Items absent in destination can't be checked (when option `-c' is given).
+<DT>  *<DD>
+File copying changes mtime of parent dir.
+</DL>
+</DL>
+
+<DT><B>-t</B><DD>
+Test mode, don't perform real synchronization and/or copying, simply
+report potential problems and discover what is to be synchronized and/or copied.
+<DT><DD>
+NB: The option can't be used simultaneously with `-p'.
+<DT><B>-v</B><DD>
+Verbose output. Multiple -v options increase the verbosity.
+Default level is equal zero. The maximum is equal 2.
+<DT><B>--version</B><DD>
+Print version and exit.
+</DL>
+<A NAME="lbAF">&nbsp;</A>
+<H2>INCLUDE/EXCLUDE PATTERNS AND FILES</H2>
+
+Paths used in pattern matching are source paths.
+Files exclude-file and include-file if pointed are to contain paths separated by newline character.
+Each pattern option can be assigned only once.
+Exclude-file and include-file can be assigned some times, contents of the files are added.
+<P>
+
+There are three policies to match file paths:
+<DL COMPACT>
+<DT>  1.<DD>
+Neither patterns nor exclude-file nor include-file are assigned.
+Include all files by default. 
+<DT>  2.<DD>
+An exclude pattern or file assigned first in command line. Matching algo:
+<DL COMPACT><DT><DD>
+<DL COMPACT>
+<DT>  2.1<DD>
+Include all files by default.
+<DT>  2.2<DD>
+If path to file matches an exclude pattern (bash or regex) or is read from exclude-file exclude it then check if file matches an include pattern (bash or regex) or is read from include-file include it.
+</DL>
+</DL>
+
+<DT>  3.<DD>
+An include pattern or file assigned first in command line. Matching algo:
+<DL COMPACT><DT><DD>
+<DL COMPACT>
+<DT>  3.1<DD>
+Exclude all files by default.
+<DT>  3.2<DD>
+If path to file matches an include pattern (bash or regex) or is read from include-file include it then check if file matches an exclude pattern (bash or regex) or is read from exclude-file exclude it.
+</DL>
+</DL>
+
+</DL>
+<P>
+
+Filtering of directory paths works the same way with exclude-file and include-file only.
+Pattern matching for directory paths is not performed.
+<A NAME="lbAG">&nbsp;</A>
+<H2>ASYNCHRONOUS EVENTS</H2>
+
+<P>
+
+Default.
+<A NAME="lbAH">&nbsp;</A>
+<H2>EXIT STATUS</H2>
+
+<P>
+
+<DL COMPACT>
+<DT>124<DD>
+Utility terminated
+<DT>137<DD>
+Utility killed
+<DT>70<DD>
+Failed to execute a command
+<DT>71<DD>
+Option is wrong
+<DT>72<DD>
+Nested dir
+<DT>73<DD>
+Too deep level of nested dirs
+<DT>74<DD>
+Is not a regular file
+<DT>75<DD>
+Is not a directory
+<DT>76<DD>
+Checksum type mismatch for source and destination
+<DT>77<DD>
+Checksum mismatch for source and created copy
+<DT>78<DD>
+Checksum type not supported
+<DT>79<DD>
+Corrupted line in npsync-file
+<DT>80<DD>
+Destination file/dir does not exist
+<DT>81<DD>
+Unacceptable name of storage item
+<DT>82<DD>
+Files can't be copied from catalogue
+<DT>83<DD>
+Wrong mtime format
+</DL>
+<P>
+
+See also exit status of used utilities.
+<A NAME="lbAI">&nbsp;</A>
+<H2>CONSEQUENCES OF ERRORS</H2>
+
+<P>
+
+If <I>npsync</I> is prematurely terminated by a signal or error, files
+or file hierarchies may be only partially copied and/or files
+and directories may have incorrect permissions, modification time, owner.
+<A NAME="lbAJ">&nbsp;</A>
+<H2>APPLICATION USAGE</H2>
+
+<P>
+
+<B>Npsync</B> implements a small subset of rsync features, so if <I>SRC</I> and
+<I>DST</I> are placed on storages with POSIX interfaces then use of rsync can be smarter.
+Data copying is verified always with checksum matching like rsync does.
+The utility was designed to operate with multi-terabyte nested directories
+placed on storages of different types so only regular files and directories
+are supported.
+No extended attributes are synchronized.
+Use an archiver to keep not regular files and extended attributes or small files
+efficiently.
+<P>
+
+Destination file or directory is ignored if it is absent in source.
+An error happens in inverse case.
+If <I>SRC</I> is alone swap it with <I>DST</I> in argument list and run <B>npsync</B> in test mode to discover destination files or directories absent in source.
+<P>
+
+Be careful, attribute synchronization can change destination directory mtime so a destination file absent in source can become newer than its parent directory.
+<P>
+
+Catalogue can be used as <I>SRC</I> or <I>DST</I>.
+The only difference is file copying, catalogue doesn't keep files, so can't be used as a source for file copying.
+Directory creation is provided by catalogue as a source with options `-r --create-dirs -f', but mtime may differ from original because attributes of parent directories can be synchronized before child creation.
+So mtime is to be synced after directory creation with options `-r -s mtime -f'.
+<P>
+
+The version supports checksum type <I>adler32</I> only.
+<A NAME="lbAK">&nbsp;</A>
+<H2>EXAMPLES</H2>
+
+<DL COMPACT>
+<DT> 1.<DD>
+Attribute comparison.
+Destination attributes are compared with source.
+Case to discover what destination attributes are to be synchronized:
+<DL COMPACT><DT><DD>
+<DL COMPACT>
+<DT><DD>
+
+npsync -r -t -f -s mode,mtime,owner SRC DST
+
+</DL>
+</DL>
+
+<DT> 2.<DD>
+Common comparison.
+Report potential problems and discover what source
+files and directories are to be copied.
+Case before mirroring to test enviromnent and access to source(s).
+Case to discover what files and directories were
+added or updated in source and absent or outdated in destination:
+<DL COMPACT><DT><DD>
+<DL COMPACT>
+<DT><DD>
+
+npsync -a -t -f SRC DST
+
+<DT>NB:<DD>
+Swap source with destination in argument list and run common
+comparison to discover what items were removed from source and exist
+in destination.
+</DL>
+</DL>
+
+<DT> 3.<DD>
+Full comparison.
+Checksums of each pair source -- destination are calculated and compared.
+Case to discover silent data corruptions:
+<DL COMPACT><DT><DD>
+<DL COMPACT>
+<DT><DD>
+
+npsync -r -t -f -d mtime,size,cks SRC DST
+
+</DL>
+</DL>
+
+<DT> 4.<DD>
+Attribute synchronization. Destination attributes are synchronized with source.
+Case to restore destination attributes if they were lost (e.g. CASTOR
+doesn't keep seconds in mtime so seconds can be restored after copying
+from CASTOR):
+<DL COMPACT><DT><DD>
+<DL COMPACT>
+<DT><DD>
+
+npsync -r -s mode,mtime,owner -v SRC DST &amp;&gt; DST.out
+
+<DT>NB:<DD>
+Be careful, outdated destination after attribute synchronization
+can't be updated with common mirroring.
+Only full mirroring or comparison can discover mismatched files.
+</DL>
+</DL>
+
+<DT> 5.<DD>
+Common mirroring. Case of outdated destination:
+<DL COMPACT><DT><DD>
+<DL COMPACT>
+<DT><DD>
+
+npsync -a -v -v SRC DST &amp;&gt; DST.out
+
+<DT>NB:<DD>
+Catalogue as a source provides comparison with destination attributes only.
+No destination files can be replaced.
+</DL>
+</DL>
+
+<DT> 6.<DD>
+Full mirroring.
+Checksums of each pair source -- destination are calculated and compared.
+Destination file is replaced with source if checksums differ.
+No files and directories absent in destination are copied from source(s), only error messages about the items are printed.
+Case to restore from source(s) (e.g. from back-up) after storage errors (e.g. silent data corruptions) in destination:
+<DL COMPACT><DT><DD>
+<DL COMPACT>
+<DT><DD>
+
+npsync -r -c -d mtime,size,cks -v -v SRC DST &amp;&gt; DST.out
+
+<DT>NB:<DD>
+Catalogue as a source provides comparison with destination attributes only.
+No destination files can be replaced
+</DL>
+</DL>
+
+<DT> 7.<DD>
+Interactive selection of mirrored files and directories.
+Case to speed up interactive selection with two stage execution.
+First stage is to create interactively list of mirrored files and directories:
+<DL COMPACT><DT><DD>
+<DL COMPACT>
+<DT><DD>
+
+npsync -a -t -i --copied FILE SRC DST
+
+</DL>
+</DL>
+
+<DT><DD>
+Second one is to mirror with the list:
+<DL COMPACT><DT><DD>
+<DL COMPACT>
+<DT><DD>
+
+npsync -a --include-file FILE SRC DST
+
+</DL>
+</DL>
+
+<DT> 8.<DD>
+Catalogue creation.
+Catalogue can be used as a source or destination.
+The only difference is file copying, catalogue doesn't keep files, so can't be used as a source for file copying.
+Case to create catalogue:
+<DL COMPACT><DT><DD>
+<DL COMPACT>
+<DT><DD>
+
+npsync -a SRC <A HREF="npsync://SRC.npsync">npsync://SRC.npsync</A>
+
+</DL>
+</DL>
+
+<DT> 9.<DD>
+Catalogue clearing.
+File used with -p option is not recreated so can contain multiple outdated
+records for the same file or directory being used some times with modified
+source. If file and directory modification history doesn't matter the
+records can be removed.
+Case to create copy of catalogue without outdated records:
+<DL COMPACT><DT><DD>
+<DL COMPACT>
+<DT><DD>
+
+npsync <A HREF="npsync://orig.npsync">npsync://orig.npsync</A> <A HREF="npsync://copy.npsync">npsync://copy.npsync</A>
+
+<DT>NB:<DD>
+Order of records in catalogue can change after its modification.
+</DL>
+</DL>
+
+<DT> 10.<DD>
+Full offline comparison.
+Catalogue can be used for comparison like file storage as a source and destination without limitations.
+Moreover comparison in the case is performed much faster.
+It is not required a lot of I/O operations to get attributes and checksums from catalogue.
+Case to perform full comparison by catalogues only:
+<DL COMPACT><DT><DD>
+<DL COMPACT>
+<DT><DD>
+
+npsync -d mtime,size,cks -s mode,mtime,owner -t <A HREF="npsync://first.npsync">npsync://first.npsync</A> <A HREF="npsync://second.npsync">npsync://second.npsync</A>
+
+<DT>NB:<DD>
+Equivalence can be tested yet faster with catalogue checksum comparison.
+Old records in the case are to be removed from catalogues as described above and checksums are to be calculated and compared for sorted catalogues:
+<DT><DD>
+
+sort -n catalogue|md5sum
+
+</DL>
+</DL>
+
+</DL>
+<A NAME="lbAL">&nbsp;</A>
+<H2>BUGS</H2>
+
+<B>Npsync</B> doesn't accept names with newline char '\n'. The char is used by design as Internal Field Separator (IFS) for directory listing.
+<A NAME="lbAM">&nbsp;</A>
+<H2>FUTURE DIRECTIONS</H2>
+
+List of storage interfaces implemented currently includes FS with POSIX interface, CASTOR HSM system, NPSYNC catalogue.
+The interfaces are implemented with virtual functions to storage utilities, so <B>npsync</B> was designed to extend the list easily for any type of storage with tree-like representation of contents by interface utilities.
+A list of possible cases includes:
+<DL COMPACT>
+<DT>  *<DD>
+Storage without POSIX interface with interface utilities (e.g. a remote, cloud storage).
+<DT>  *<DD>
+FS with unusable or absent kernel driver.
+Interface utilities could provide access to storage without the driver.
+<DT>  *<DD>
+FS implemented with Linux FUSE.
+Interface utilities could bypass FUSE to accelerate access to the FS.
+<DT>  *<DD>
+File and directory names can be converted somehow for syncing with storage function _item_path.
+So a storage interface can provide specific path composition or translate names from one language to another.
+<DT>  *<DD>
+The utility was written in bash, so can be easily adapted by user e.g. to perform additional actions for synchronization or copying.
+</DL>
+<A NAME="lbAN">&nbsp;</A>
+<H2>SEE ALSO</H2>
+
+<DL COMPACT>
+<DT>POSIX FS: <DD>
+<I>cp</I>, <I>ls</I>, <I>mkdir</I>, <I>touch</I>, <I>chmod</I>, <I>chown</I>, <I>stat</I>, <I>rm</I>
+<DT>CASTOR: <DD>
+<I>rfcp</I>, <I>nsls</I>, <I>nsmkdir</I>, <I>nstouch</I>, <I>nssetchecksum</I>, <I>nschmod</I>, <I>nschown</I>, <I>rfstat</I>, <I>nsrm</I>
+</DL>
+<A NAME="lbAO">&nbsp;</A>
+<H2>COPYRIGHT</H2>
+
+Copyright &#169; 2013-2015 Alexey Filin.
+License GPLv3+: GNU GPL version 3 or later &lt;<A HREF="http://gnu.org/licenses/gpl.html">http://gnu.org/licenses/gpl.html</A>&gt;.
+<BR>
+
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.
+<P>
+
+<HR>
+<A NAME="index">&nbsp;</A><H2>Index</H2>
+<DL>
+<DT><A HREF="#lbAB">NAME</A><DD>
+<DT><A HREF="#lbAC">SYNOPSIS</A><DD>
+<DT><A HREF="#lbAD">DESCRIPTION</A><DD>
+<DT><A HREF="#lbAE">OPTIONS</A><DD>
+<DT><A HREF="#lbAF">INCLUDE/EXCLUDE PATTERNS AND FILES</A><DD>
+<DT><A HREF="#lbAG">ASYNCHRONOUS EVENTS</A><DD>
+<DT><A HREF="#lbAH">EXIT STATUS</A><DD>
+<DT><A HREF="#lbAI">CONSEQUENCES OF ERRORS</A><DD>
+<DT><A HREF="#lbAJ">APPLICATION USAGE</A><DD>
+<DT><A HREF="#lbAK">EXAMPLES</A><DD>
+<DT><A HREF="#lbAL">BUGS</A><DD>
+<DT><A HREF="#lbAM">FUTURE DIRECTIONS</A><DD>
+<DT><A HREF="#lbAN">SEE ALSO</A><DD>
+<DT><A HREF="#lbAO">COPYRIGHT</A><DD>
+</DL>
+<HR>
+This document was created by
+<A HREF="/man/man2html">man2html</A>,
+using the manual pages.<BR>
+Time: 18:12:20 GMT, February 03, 2015
+</BODY>
+</HTML>
