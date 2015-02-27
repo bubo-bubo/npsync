@@ -22,14 +22,17 @@ main( int argc, char *argv[] )
   u_char buf[BUF_SIZE];
   ssize_t size=0;
   u_int32_t adler = adler32( 0L, Z_NULL, 0 );
-  if ( argc != 2 ) {
+  if ( argc == 2 ) {
+    if ( (fd=open( argv[1], O_RDONLY )) == -1 ) {
+      long e=errno;
+      perror( argv[1] );
+      exit( e );
+    }
+  } else if ( argc == 1 ) {
+    fd = STDIN_FILENO; /* defined in unistd.h */
+  } else {
     fprintf( stderr, "Usage: %s FILE_NAME\n", argv[0] );
     exit( 1 );
-  }
-  if ( (fd=open( argv[1], O_RDONLY )) == -1 ) {
-    long e=errno;
-    perror( argv[1] );
-    exit( e );
   }
   while ( (size=read( fd, buf, BUF_SIZE )) > 0 ) {
     adler = adler32( adler, buf, size );

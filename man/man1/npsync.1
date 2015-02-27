@@ -22,6 +22,10 @@ SIGTERM is sent in 10 minutes, SIGKILL is sent in 15 minutes of utility executio
 \fB-a\fP
 Archive mode, the same as \`-r -c -d mtime,size'.
 .TP 11
+\fB--aux-npsync\fP \fIFILE\fP
+Use source item attributes and checksums recorded in auxiliary catalogue \fIFILE\fP instead of storage.
+Storage attributes and checksums are used if absent in catalogue.
+.TP 11
 \fB-c\fP
 The same as \`--create-dirs --create-files'.
 .TP 11
@@ -49,7 +53,7 @@ is file checksums are equal.
 Default list is empty, so no files are compared.
 .TP 11
 \fB--exclude\fP \fIPATTERN\fP
-Exclude source files matching \fIbash\fP(1) \fIPATTERN\fP.
+Exclude source files matching extended \fIbash\fP(1) \fIPATTERN\fP.
 .TP 11
 \fB--exclude-file\fP \fIFILE\fP
 Exclude source items read from \fIFILE\fP.
@@ -60,6 +64,15 @@ Exclude source files matching \fIregex\fP(3) \fIPATTERN\fP.
 \fB-f\fP
 Force execution, ignore errors.
 .TP 11
+\fB--failed-cp\fP \fIFILE\fP
+Add to FILE names of source files failed to be copied to destination.
+.TP 11
+\fB--failed-mkdir\fP \fIFILE\fP
+Add to FILE names of source directories failed to be created in destination.
+.TP 11
+\fB--failed-sync-attrs\fP \fIFILE\fP
+Add to FILE names of source items failed to synchronize attributes in destination.
+.TP 11
 \fB-i\fP
 Prompt before every modification.
 .TP 11
@@ -67,7 +80,7 @@ Prompt before every modification.
 Print help and exit.
 .TP 11
 \fB--include\fP \fIPATTERN\fP
-Include source files matching \fIbash\fP(1) \fIPATTERN\fP.
+Include source files matching extended \fIbash\fP(1) \fIPATTERN\fP.
 .TP 11
 \fB--include-file\fP \fIFILE\fP
 Include source items read from \fIFILE\fP.
@@ -92,6 +105,9 @@ NB2: The option can't be used simultaneously with \`-t'.
 .TP 11
 \fB-r\fP
 Synchronize and/or copy nested directories recursively.
+.TP 11
+\fB--real-data-cks\fP
+Calculate checksum of real data when possible instead of getting stored value
 .TP 11
 \fB-s\fP \fIATTRS\fP
 The same as
@@ -141,7 +157,7 @@ NB: The option can't be used simultaneously with \`-p'.
 .TP 11
 \fB-v\fP
 Verbose output. Multiple -v options increase the verbosity.
-Default level is equal zero. The maximum is equal 2.
+Default level is equal zero. The maximum is equal 3.
 .TP 11
 \fB--version\fP
 Print version and exit.
@@ -232,7 +248,11 @@ efficiently.
 .LP
 Destination file or directory is ignored if it is absent in source.
 An error happens in inverse case.
-If \fISRC\fP is alone swap it with \fIDST\fP in argument list and run \fBnpsync\fP in test mode to discover destination files or directories absent in source.
+If \fISRC\fP is alone swap it with \fIDST\fP in argument list and run \fBnpsync\fP in test mode to discover destination files or directories absent in source, e.g.:
+.IP "" 4
+npsync -a -t -f a/b/item c/d
+.IP "" 4
+npsync -a -t -f c/d/item a/b
 .LP
 Be careful, attribute synchronization can change destination directory mtime so a destination file absent in source can become newer than its parent directory.
 .LP
@@ -241,7 +261,37 @@ The only difference is file copying, catalogue doesn't keep files, so can't be u
 Directory creation is provided by catalogue as a source with options \`-r --create-dirs -f', but mtime may differ from original because attributes of parent directories can be synchronized before child creation.
 So mtime is to be synced after directory creation with options \`-r -s mtime -f'.
 .LP
+Some storages provide checksum as a file attribute (e.g. CASTOR HSM).
+If the checksum is provided then it is used by default.
+To force checksum calculation for real data option \`--real-data-cks' is to be used (e.g. to check real data integrity on storage medium).
+Use the option not frequently to prolong storage durability.
+.LP
 The version supports checksum type \fIadler32\fP only.
+.LP
+HSM system can provide a utility to pre-stage files to disk from tape, to reorder tape operations in an optimal way.
+CASTOR HSM provides utility \`stager_get' to reduce overall file access time for files migrated to tapes.
+At first list of accessed files is to be created with option \`--copied'.
+SRC is an absolute CASTOR path in the example below:
+.IP "" 4
+npsync -a -t --copied FILELIST SRC DST
+.LP
+Accessed files are to be pre-staged:
+.IP "" 4
+stager_get -f FILELIST -U mytag
+.LP
+Pre-staging is performed asynchronously.
+Utility \`stager_qry' is to be used to query status of pre-staged files:
+.IP "" 4
+stager_qry -U mytag
+.LP
+At last pre-staged files are accessed:
+.IP "" 4
+npsync -a SRC DST
+.LP
+Option \`--aux-npsync' can be used for synchronization to get source item attributes and checksums from catalogue instead of storage.
+Number of IO operations is reduced significantly in the case.
+.LP
+Options \`--failed-cp', \`--failed-mkdir', \`--failed-sync-attrs' are to be used to automatize error handling.
 .SH EXAMPLES
 .IP " 1." 4
 Attribute comparison.
@@ -265,11 +315,6 @@ added or updated in source and absent or outdated in destination:
 .EX
 npsync -a -t -f SRC DST
 .EE
-.TP 4
-NB:
-Swap source with destination in argument list and run common
-comparison to discover what items were removed from source and exist
-in destination.
 .RE
 .IP " 3." 4
 Full comparison.

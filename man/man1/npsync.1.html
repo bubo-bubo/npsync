@@ -40,6 +40,9 @@ SIGTERM is sent in 10 minutes, SIGKILL is sent in 15 minutes of utility executio
 <DL COMPACT>
 <DT><B>-a</B><DD>
 Archive mode, the same as `-r -c -d mtime,size'.
+<DT><B>--aux-npsync</B> <I>FILE</I><DD>
+Use source item attributes and checksums recorded in auxiliary catalogue <I>FILE</I> instead of storage.
+Storage attributes and checksums are used if absent in catalogue.
 <DT><B>-c</B><DD>
 The same as `--create-dirs --create-files'.
 <DT><B>--copied</B> <I>FILE</I><DD>
@@ -65,19 +68,25 @@ is file checksums are equal.
 <DT><DD>
 Default list is empty, so no files are compared.
 <DT><B>--exclude</B> <I>PATTERN</I><DD>
-Exclude source files matching <I><A HREF="/man/man2html?1+bash">bash</A></I>(1) <I>PATTERN</I>.
+Exclude source files matching extended <I><A HREF="/man/man2html?1+bash">bash</A></I>(1) <I>PATTERN</I>.
 <DT><B>--exclude-file</B> <I>FILE</I><DD>
 Exclude source items read from <I>FILE</I>.
 <DT><B>--exclude-regex</B> <I>PATTERN</I><DD>
 Exclude source files matching <I><A HREF="/man/man2html?3+regex">regex</A></I>(3) <I>PATTERN</I>.
 <DT><B>-f</B><DD>
 Force execution, ignore errors.
+<DT><B>--failed-cp</B> <I>FILE</I><DD>
+Add to FILE names of source files failed to be copied to destination.
+<DT><B>--failed-mkdir</B> <I>FILE</I><DD>
+Add to FILE names of source directories failed to be created in destination.
+<DT><B>--failed-sync-attrs</B> <I>FILE</I><DD>
+Add to FILE names of source items failed to synchronize attributes in destination.
 <DT><B>-i</B><DD>
 Prompt before every modification.
 <DT><B>-h</B><DD>
 Print help and exit.
 <DT><B>--include</B> <I>PATTERN</I><DD>
-Include source files matching <I><A HREF="/man/man2html?1+bash">bash</A></I>(1) <I>PATTERN</I>.
+Include source files matching extended <I><A HREF="/man/man2html?1+bash">bash</A></I>(1) <I>PATTERN</I>.
 <DT><B>--include-file</B> <I>FILE</I><DD>
 Include source items read from <I>FILE</I>.
 <DT><B>--include-regex</B> <I>PATTERN</I><DD>
@@ -96,6 +105,8 @@ NB: The option turns on checksum calculation for all source files.
 NB2: The option can't be used simultaneously with `-t'.
 <DT><B>-r</B><DD>
 Synchronize and/or copy nested directories recursively.
+<DT><B>--real-data-cks</B><DD>
+Calculate checksum of real data when possible instead of getting stored value
 <DT><B>-s</B> <I>ATTRS</I><DD>
 The same as
 <BR>
@@ -149,7 +160,7 @@ report potential problems and discover what is to be synchronized and/or copied.
 NB: The option can't be used simultaneously with `-p'.
 <DT><B>-v</B><DD>
 Verbose output. Multiple -v options increase the verbosity.
-Default level is equal zero. The maximum is equal 2.
+Default level is equal zero. The maximum is equal 3.
 <DT><B>--version</B><DD>
 Print version and exit.
 </DL>
@@ -268,7 +279,13 @@ efficiently.
 
 Destination file or directory is ignored if it is absent in source.
 An error happens in inverse case.
-If <I>SRC</I> is alone swap it with <I>DST</I> in argument list and run <B>npsync</B> in test mode to discover destination files or directories absent in source.
+If <I>SRC</I> is alone swap it with <I>DST</I> in argument list and run <B>npsync</B> in test mode to discover destination files or directories absent in source, e.g.:
+<DL COMPACT>
+<DT><DD>
+npsync -a -t -f a/b/item c/d
+<DT><DD>
+npsync -a -t -f c/d/item a/b
+</DL>
 <P>
 
 Be careful, attribute synchronization can change destination directory mtime so a destination file absent in source can become newer than its parent directory.
@@ -280,7 +297,52 @@ Directory creation is provided by catalogue as a source with options `-r --creat
 So mtime is to be synced after directory creation with options `-r -s mtime -f'.
 <P>
 
+Some storages provide checksum as a file attribute (e.g. CASTOR HSM).
+If the checksum is provided then it is used by default.
+To force checksum calculation for real data option `--real-data-cks' is to be used (e.g. to check real data integrity on storage medium).
+Use the option not frequently to prolong storage durability.
+<P>
+
 The version supports checksum type <I>adler32</I> only.
+<P>
+
+HSM system can provide a utility to pre-stage files to disk from tape, to reorder tape operations in an optimal way.
+CASTOR HSM provides utility `stager_get' to reduce overall file access time for files migrated to tapes.
+At first list of accessed files is to be created with option `--copied'.
+SRC is an absolute CASTOR path in the example below:
+<DL COMPACT>
+<DT><DD>
+npsync -a -t --copied FILELIST SRC DST
+</DL>
+<P>
+
+Accessed files are to be pre-staged:
+<DL COMPACT>
+<DT><DD>
+stager_get -f FILELIST -U mytag
+</DL>
+<P>
+
+Pre-staging is performed asynchronously.
+Utility `stager_qry' is to be used to query status of pre-staged files:
+<DL COMPACT>
+<DT><DD>
+stager_qry -U mytag
+</DL>
+<P>
+
+At last pre-staged files are accessed:
+<DL COMPACT>
+<DT><DD>
+npsync -a SRC DST
+</DL>
+<P>
+
+Option `--aux-npsync' can be used for synchronization to get source item attributes and checksums from catalogue instead of storage.
+Number of IO operations is reduced significantly in the case.
+<P>
+
+Options `--failed-cp', `--failed-mkdir', `--failed-sync-attrs' are to be used to automatize error handling.
 <A NAME="lbAK">&nbsp;</A>
 <H2>EXAMPLES</H2>
 
@@ -311,10 +373,6 @@ added or updated in source and absent or outdated in destination:
 
 npsync -a -t -f SRC DST
 
-<DT>NB:<DD>
-Swap source with destination in argument list and run common
-comparison to discover what items were removed from source and exist
-in destination.
 </DL>
 </DL>
 
@@ -527,6 +585,6 @@ There is NO WARRANTY, to the extent permitted by law.
 This document was created by
 <A HREF="/man/man2html">man2html</A>,
 using the manual pages.<BR>
-Time: 18:12:20 GMT, February 03, 2015
+Time: 12:55:01 GMT, February 27, 2015
 </BODY>
 </HTML>
