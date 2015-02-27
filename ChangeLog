@@ -1,0 +1,12 @@
+2015-02-27  Alexey Filin
+
+	* add option --source-npsync to get source attributes and cks from auxiliary catalogue instead of storage
+	* add options --failed-cp, --failed-mkdir, --failed-sync-attrs to automatize error handling
+
+	Version 3.3.1
+
+2015-02-16  Alexey Filin
+
+	* add verbosity level 3 to inform about _get_*, _ls
+	* make _rm_separator to remove multiple trailing separators. Be careful: extended bash pattern is made default for npsync
+	* add checksum calculation of real data (option --real-data-cks) instead of stored value
