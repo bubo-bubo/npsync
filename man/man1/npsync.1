@@ -95,6 +95,9 @@ Copy nested directories with \fILEVEL\fP as the maximum level of nesting
 \fB--npsync-interface\fP \fIFILE\fP
 Load npsync storage interface from \fIFILE\fP.
 .TP 11
+\fB--omit-copy-cks-check\fP
+Omit check of copied file checksums.
+.TP 11
 \fB-p\fP \fIFILE\fP
 Add source file and directory attributes to \fIFILE\fP.
 The \fIFILE\fP can be used later with prefix `npsync://' as source or destination.
@@ -290,6 +293,11 @@ npsync -a SRC DST
 .LP
 Option \`--aux-npsync' can be used for synchronization to get source item attributes and checksums from catalogue instead of storage.
 Number of IO operations is reduced significantly in the case.
+.LP
+Option \--omit-copy-cks-check' is meant for advanced optimizations.
+It turns off source checksum calculation and copy checksum comparison and should not be used in common case.
+Correct optimization is to compare checksums for an extra stage after data transfer on destination side locally with catalogue.
+It may help to reduce load on transfer channel between source and destination twice and more.
 .LP
 Options \`--failed-cp', \`--failed-mkdir', \`--failed-sync-attrs' are to be used to automatize error handling.
 .SH EXAMPLES

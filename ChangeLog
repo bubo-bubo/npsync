@@ -5,6 +5,10 @@
 
 	Version 3.3.1
 
+	* add option --omit-copy-cks-check for advanced optimizations to reduce load on transfer channel
+
+	Version 3.3.2
+
 2015-02-16  Alexey Filin
 
 	* add verbosity level 3 to inform about _get_*, _ls

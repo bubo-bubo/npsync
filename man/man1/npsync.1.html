@@ -96,6 +96,8 @@ Copy nested directories with <I>LEVEL</I> as the maximum level of nesting
 (by default the number is zero i.e. unlimited).
 <DT><B>--npsync-interface</B> <I>FILE</I><DD>
 Load npsync storage interface from <I>FILE</I>.
+<DT><B>--omit-copy-cks-check</B><DD>
+Omit check of copied file checksums.
 <DT><B>-p</B> <I>FILE</I><DD>
 Add source file and directory attributes to <I>FILE</I>.
 The <I>FILE</I> can be used later with prefix `<A HREF="npsync://'">npsync://'</A> as source or destination.
@@ -342,6 +344,12 @@ Option `--aux-npsync' can be used for synchronization to get source item attribu
 Number of IO operations is reduced significantly in the case.
 <P>
 
+Option --omit-copy-cks-check' is meant for advanced optimizations.
+It turns off source checksum calculation and copy checksum comparison and should not be used in common case.
+Correct optimization is to compare checksums for an extra stage after data transfer on destination side locally with catalogue.
+It may help to reduce load on transfer channel between source and destination twice and more.
+<P>
+
 Options `--failed-cp', `--failed-mkdir', `--failed-sync-attrs' are to be used to automatize error handling.
 <A NAME="lbAK">&nbsp;</A>
 <H2>EXAMPLES</H2>
@@ -585,6 +593,6 @@ There is NO WARRANTY, to the extent permitted by law.
 This document was created by
 <A HREF="/man/man2html">man2html</A>,
 using the manual pages.<BR>
-Time: 12:55:01 GMT, February 27, 2015
+Time: 18:00:14 GMT, February 27, 2015
 </BODY>
 </HTML>

@@ -132,6 +132,8 @@ readonly NPS_OPTIONS_HELP="
              (by default the number is zero i.e. unlimited).
   --npsync-interface FILE
              Load npsync storage interface from FILE.
+  --omit-copy-cks-check
+             Omit check of copied file checksums.
   -p FILE    Add source file and directory attributes to FILE. The FILE can be
              used later with prefix \`npsync://' as source or destination.
                NB: The option turns on calculation of source file checksum.
@@ -905,12 +907,13 @@ if [ -x '/usr/bin/rfcp' ]; then
 	local s1=`rfio_glue_paths "$2" "$3"`
 	local s2=`rfio_glue_paths "$4" "$5"`
 	[ "$7" != "AD" ] && { nps_perr $NPS_CKS_TYPE_NOT_SUPPORTED "$7" "$1" "$2" "$3"; return $NPS_CKS_TYPE_NOT_SUPPORTED; }
-	if "$NPS_NSTOUCH" "$s2" && "$NPS_NSSETCHECKSUM" -n adler32 -k "$6" "$s2"; then
-	    if [ $NPS_VERBOSE_OUTPUT -gt 1 ]; then
-		"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RFCP" "$s1" "$s2" || { nps_failed "$NPS_RFCP \"$s1\" \"$s2\""; return $?; }
-	    else
-		"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RFCP" "$s1" "$s2" >/dev/null || { nps_failed "$NPS_RFCP \"$s1\" \"$s2\""; return $?; }
-	    fi
+	if [ $NPS_OMIT_COPY_CKS_CHECK -eq 0 ]; then
+	    "$NPS_NSTOUCH" "$s2" && "$NPS_NSSETCHECKSUM" -n adler32 -k "$6" "$s2" || return $?
+	fi
+	if [ $NPS_VERBOSE_OUTPUT -gt 1 ]; then
+	    "$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RFCP" "$s1" "$s2" || { nps_failed "$NPS_RFCP \"$s1\" \"$s2\""; return $?; }
+	else
+	    "$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RFCP" "$s1" "$s2" >/dev/null || { nps_failed "$NPS_RFCP \"$s1\" \"$s2\""; return $?; }
 	fi
     }
 
@@ -1543,8 +1546,10 @@ function nps_copy_file() {
 	[ $NPS_VERBOSE_OUTPUT -gt 1 ] && echo "copying source file "`nps_format_path "$1" "$2" "$3"`" to destination file "`nps_format_path "$4" "$5" "$6"`
 	${nps_vtfuncs["$4_cp"]} "$1" "$2" "$3" "$5" "$6" "$7" "$8" || return $?
 	NPS_FILE_COPIED_FLAG=1
-	[ $NPS_VERBOSE_OUTPUT -gt 1 ] && echo "comparing checksum of source file "`nps_format_path "$1" "$2" "$3"`" with destination file "`nps_format_path "$4" "$5" "$6"`
-	${nps_vtfuncs["$4_compare_cks"]} "$1" "$2" "$3" "$5" "$6" "$7" "$8" || return $?
+	if [ $NPS_OMIT_COPY_CKS_CHECK -eq 0 ]; then
+	    [ $NPS_VERBOSE_OUTPUT -gt 1 ] && echo "comparing checksum of source file "`nps_format_path "$1" "$2" "$3"`" with destination file "`nps_format_path "$4" "$5" "$6"`
+	    ${nps_vtfuncs["$4_compare_cks"]} "$1" "$2" "$3" "$5" "$6" "$7" "$8" || return $?
+	fi
     fi
     nps_save_path_to_file "$1" "$2" "$3" "$NPS_COPIED_ITEMS_FILE"
 }
@@ -1567,7 +1572,7 @@ function nps_sync_file() {
     if ! ${nps_vtfuncs["$4_exists"]} "$5" "$6"; then
 	if [ $NPS_CREATE_ABSENT_FILE -ne 0 ]; then
 	    [ $NPS_VERBOSE_OUTPUT -gt 0 ] && echo "absent destination file "`nps_format_path "$4" "$5" "$6"`", source file "`nps_format_path "$1" "$2" "$3"`
-	    get_src_cks=1
+	    [ $NPS_OMIT_COPY_CKS_CHECK -eq 0 ] && get_src_cks=1
 	    copy_source_file=1
 	else
 	    nps_perr $NPS_DST_ITEM_DOES_NOT_EXIST "$4" "$5" "$6"
@@ -1599,7 +1604,7 @@ function nps_sync_file() {
 	    local out=`${nps_vtfuncs["${cmptype}_compare_mtime"]} "$dst_mtime" "$src_mtime"` || return $?
 	    if [ "$out" == "older" ]; then
 		[ $NPS_VERBOSE_OUTPUT -gt 0 ] && echo "$dst_mtime < $src_mtime: destination "`nps_format_path "$4" "$5" "$6"`" is older source "`nps_format_path "$1" "$2" "$3"`
-		get_src_cks=1
+		[ $NPS_OMIT_COPY_CKS_CHECK -eq 0 ] && get_src_cks=1
 		remove_destination_file=1
 		copy_source_file=1
 		compare_flag=0
@@ -1616,7 +1621,7 @@ function nps_sync_file() {
 	    local dst_size=`${nps_vtfuncs["$4_get_size"]} "$5" "$6"` || return $?
 	    if [[ "$dst_size" -ne "$src_size" ]]; then
 		[ $NPS_VERBOSE_OUTPUT -gt 0 ] && echo "$dst_size != $src_size: size mismatch between destination "`nps_format_path "$4" "$5" "$6"`" and source "`nps_format_path "$1" "$2" "$3"`
-		get_src_cks=1
+		[ $NPS_OMIT_COPY_CKS_CHECK -eq 0 ] && get_src_cks=1
 		remove_destination_file=1
 		copy_source_file=1
 	    fi
@@ -2137,6 +2142,8 @@ NPS_FAILED_CP_FILE=
 NPS_FAILED_MKDIR_FILE=
 NPS_FAILED_SYNC_ATTRS_FILE=
 
+NPS_OMIT_COPY_CKS_CHECK=0
+
 #############################################################################
 # print destination dir and return index of destination in nps_vttypes.
 # Hardcoded indices:
@@ -2299,6 +2306,9 @@ while [ $# -gt 0 ]; do
 	--npsync-interface)
 	    source "$2" || exit $?
 	    shift
+	    ;;
+	--omit-copy-cks-check)
+	    NPS_OMIT_COPY_CKS_CHECK=1
 	    ;;
 	-p) [ -z "$2" -o $NPS_TEST_MODE -ne 0 ] && { nps_perr $NPS_WRONG_ARGS "$1"; exit $NPS_WRONG_ARGS; }
 	    NPS_NPSYNCINFO_FILE="$2"
