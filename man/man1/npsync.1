@@ -296,7 +296,7 @@ Number of IO operations is reduced significantly in the case.
 .LP
 Option \--omit-copy-cks-check' is meant for advanced optimizations.
 It turns off source checksum calculation and copy checksum comparison and should not be used in common case.
-Correct optimization is to compare checksums for an extra stage after data transfer on destination side locally with catalogue.
+Correct optimization is to compare checksums for an extra stage after data transfer with catalogue on destination side locally or with value provided by destination storage.
 It may help to reduce load on transfer channel between source and destination twice and more.
 .LP
 Options \`--failed-cp', \`--failed-mkdir', \`--failed-sync-attrs' are to be used to automatize error handling.
