@@ -57,11 +57,11 @@ Set difference criteria for source-destination file comparison.
 <DL COMPACT><DT><DD>
 <DL COMPACT>
 <DT>  * <I>mtime</I><DD>
-if destination modification time older.
+is destination modification time older.
 <DT>  * <I>size</I><DD>
-is file sizes are equal. If mtime has been tested, then size is compared only if mtimes are equal.
+are file sizes equal. If mtime has been tested, then size is compared only if mtimes are equal.
 <DT>  * <I>cks</I><DD>
-is file checksums are equal.
+are file checksums equal.
 </DL>
 </DL>
 
@@ -75,12 +75,8 @@ Exclude source items read from <I>FILE</I>.
 Exclude source files matching <I><A HREF="/man/man2html?3+regex">regex</A></I>(3) <I>PATTERN</I>.
 <DT><B>-f</B><DD>
 Force execution, ignore errors.
-<DT><B>--failed-cp</B> <I>FILE</I><DD>
-Add to FILE names of source files failed to be copied to destination.
-<DT><B>--failed-mkdir</B> <I>FILE</I><DD>
-Add to FILE names of source directories failed to be created in destination.
-<DT><B>--failed-sync-attrs</B> <I>FILE</I><DD>
-Add to FILE names of source items failed to synchronize attributes in destination.
+<DT><B>--failed</B> <I>FILE</I><DD>
+Add to FILE formatted records for files and directories failed to be synced.
 <DT><B>-i</B><DD>
 Prompt before every modification.
 <DT><B>-h</B><DD>
@@ -250,7 +246,9 @@ Unacceptable name of storage item
 <DT>82<DD>
 Files can't be copied from catalogue
 <DT>83<DD>
-Wrong mtime format
+Wrong destination mtime format
+<DT>84<DD>
+Wrong source mtime format
 </DL>
 <P>
 
@@ -310,11 +308,11 @@ The version supports checksum type <I>adler32</I> only.
 
 HSM system can provide a utility to pre-stage files to disk from tape, to reorder tape operations in an optimal way.
 CASTOR HSM provides utility `stager_get' to reduce overall file access time for files migrated to tapes.
-At first list of accessed files is to be created with option `--copied'.
+At first list of accessed files is to be created with option `--copied-files'.
 SRC is an absolute CASTOR path in the example below:
 <DL COMPACT>
 <DT><DD>
-npsync -a -t --copied FILELIST SRC DST
+npsync -a -t --copied-files FILELIST SRC DST
 </DL>
 <P>
 
@@ -344,13 +342,30 @@ Option `--aux-npsync' can be used for synchronization to get source item attribu
 Number of IO operations is reduced significantly in the case.
 <P>
 
-Option --omit-copy-cks-check' is meant for advanced optimizations.
+Option `--omit-copy-cks-check' is meant for advanced optimizations.
 It turns off source checksum calculation and copy checksum comparison and should not be used in common case.
 Correct optimization is to compare checksums for an extra stage after data transfer with catalogue on destination side locally or with value provided by destination storage.
 It may help to reduce load on transfer channel between source and destination twice and more.
 <P>
 
-Options `--failed-cp', `--failed-mkdir', `--failed-sync-attrs' are to be used to automatize error handling.
+Option `--failed' is to be used to automatize error handling.
+Generated file contains records of the format:
+<DL COMPACT>
+<DT><DD>
+&lt;utility&gt; &lt;error num&gt; &lt;source item&gt; &lt;destination item&gt;
+</DL>
+<P>
+
+Field &lt;utility&gt; is either path to failed utility or '-'.
+Field &lt;error num&gt; is the number of error.
+Fields &lt;source item&gt; and &lt;destination item&gt; are formatted paths to source and destination items.
+In two cases the paths are confusing:
+<DL COMPACT>
+<DT>  *<DD>
+Field &lt;destination item&gt; can be empty if error happened with source item,
+<DT>  *<DD>
+Field &lt;source item&gt; can point a directory containing child with wrong name.
+</DL>
 <A NAME="lbAK">&nbsp;</A>
 <H2>EXAMPLES</H2>
 
@@ -558,7 +573,7 @@ The utility was written in bash, so can be easily adapted by user e.g. to perfor
 <DT>POSIX FS: <DD>
 <I>cp</I>, <I>ls</I>, <I>mkdir</I>, <I>touch</I>, <I>chmod</I>, <I>chown</I>, <I>stat</I>, <I>rm</I>
 <DT>CASTOR: <DD>
-<I>rfcp</I>, <I>nsls</I>, <I>nsmkdir</I>, <I>nstouch</I>, <I>nssetchecksum</I>, <I>nschmod</I>, <I>nschown</I>, <I>rfstat</I>, <I>nsrm</I>
+<I>rfcp</I>, <I>rfcat</I>, <I>nsls</I>, <I>nsmkdir</I>, <I>nstouch</I>, <I>nssetchecksum</I>, <I>nschmod</I>, <I>nschown</I>, <I>rfstat</I>, <I>nsrm</I>
 </DL>
 <A NAME="lbAO">&nbsp;</A>
 <H2>COPYRIGHT</H2>
@@ -593,6 +608,6 @@ There is NO WARRANTY, to the extent permitted by law.
 This document was created by
 <A HREF="/man/man2html">man2html</A>,
 using the manual pages.<BR>
-Time: 18:15:30 GMT, February 27, 2015
+Time: 18:38:05 GMT, March 02, 2015
 </BODY>
 </HTML>

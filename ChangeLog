@@ -1,3 +1,10 @@
+2015-03-02  Alexey Filin
+
+	* add --copied-dirs and --copied-files. stager_get rejects dirs
+	* add --synced-dirs and --synced-files
+	* replace --failed-* with --failed, output is formatte
+	* fix: NPS_SRC_ROOT_PATH + NPS_SRC_NAME -> NPS_SRC_PATH + ''
+
 2015-02-27  Alexey Filin
 
 	* add option --source-npsync to get source attributes and cks from auxiliary catalogue instead of storage

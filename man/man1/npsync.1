@@ -43,11 +43,11 @@ Set difference criteria for source-destination file comparison.
 \fICRITERIA\fP is a comma-separated list of words (without spaces): \fImtime\fP, \fIsize\fP, \fIcks\fP.
 .RS 11
 .IP "  * \fImtime\fP" 11
-if destination modification time older.
+is destination modification time older.
 .IP "  * \fIsize\fP" 11
-is file sizes are equal. If mtime has been tested, then size is compared only if mtimes are equal.
+are file sizes equal. If mtime has been tested, then size is compared only if mtimes are equal.
 .IP "  * \fIcks\fP" 11
-is file checksums are equal.
+are file checksums equal.
 .RE
 .IP "" 11
 Default list is empty, so no files are compared.
@@ -64,14 +64,8 @@ Exclude source files matching \fIregex\fP(3) \fIPATTERN\fP.
 \fB-f\fP
 Force execution, ignore errors.
 .TP 11
-\fB--failed-cp\fP \fIFILE\fP
-Add to FILE names of source files failed to be copied to destination.
-.TP 11
-\fB--failed-mkdir\fP \fIFILE\fP
-Add to FILE names of source directories failed to be created in destination.
-.TP 11
-\fB--failed-sync-attrs\fP \fIFILE\fP
-Add to FILE names of source items failed to synchronize attributes in destination.
+\fB--failed\fP \fIFILE\fP
+Add to FILE formatted records for files and directories failed to be synced.
 .TP 11
 \fB-i\fP
 Prompt before every modification.
@@ -229,7 +223,9 @@ Unacceptable name of storage item
 .IP "82" 5
 Files can't be copied from catalogue
 .IP "83" 5
-Wrong mtime format
+Wrong destination mtime format
+.IP "84" 5
+Wrong source mtime format
 .LP
 See also exit status of used utilities.
 .SH "CONSEQUENCES OF ERRORS"
@@ -273,10 +269,10 @@ The version supports checksum type \fIadler32\fP only.
 .LP
 HSM system can provide a utility to pre-stage files to disk from tape, to reorder tape operations in an optimal way.
 CASTOR HSM provides utility \`stager_get' to reduce overall file access time for files migrated to tapes.
-At first list of accessed files is to be created with option \`--copied'.
+At first list of accessed files is to be created with option \`--copied-files'.
 SRC is an absolute CASTOR path in the example below:
 .IP "" 4
-npsync -a -t --copied FILELIST SRC DST
+npsync -a -t --copied-files FILELIST SRC DST
 .LP
 Accessed files are to be pre-staged:
 .IP "" 4
@@ -294,12 +290,24 @@ npsync -a SRC DST
 Option \`--aux-npsync' can be used for synchronization to get source item attributes and checksums from catalogue instead of storage.
 Number of IO operations is reduced significantly in the case.
 .LP
-Option \--omit-copy-cks-check' is meant for advanced optimizations.
+Option \`--omit-copy-cks-check' is meant for advanced optimizations.
 It turns off source checksum calculation and copy checksum comparison and should not be used in common case.
 Correct optimization is to compare checksums for an extra stage after data transfer with catalogue on destination side locally or with value provided by destination storage.
 It may help to reduce load on transfer channel between source and destination twice and more.
 .LP
-Options \`--failed-cp', \`--failed-mkdir', \`--failed-sync-attrs' are to be used to automatize error handling.
+Option \`--failed' is to be used to automatize error handling.
+Generated file contains records of the format:
+.IP "" 4
+<utility> <error num> <source item> <destination item>
+.LP
+Field <utility> is either path to failed utility or '-'.
+Field <error num> is the number of error.
+Fields <source item> and <destination item> are formatted paths to source and destination items.
+In two cases the paths are confusing:
+.IP "  *" 4
+Field <destination item> can be empty if error happened with source item,
+.IP "  *" 4
+Field <source item> can point a directory containing child with wrong name.
 .SH EXAMPLES
 .IP " 1." 4
 Attribute comparison.
@@ -466,7 +474,7 @@ The utility was written in bash, so can be easily adapted by user e.g. to perfor
 .IP "POSIX FS: " 10
 \fIcp\fP, \fIls\fP, \fImkdir\fP, \fItouch\fP, \fIchmod\fP, \fIchown\fP, \fIstat\fP, \fIrm\fP
 .IP "CASTOR: " 10
-\fIrfcp\fP, \fInsls\fP, \fInsmkdir\fP, \fInstouch\fP, \fInssetchecksum\fP, \fInschmod\fP, \fInschown\fP, \fIrfstat\fP, \fInsrm\fP
+\fIrfcp\fP, \fIrfcat\fP, \fInsls\fP, \fInsmkdir\fP, \fInstouch\fP, \fInssetchecksum\fP, \fInschmod\fP, \fInschown\fP, \fIrfstat\fP, \fInsrm\fP
 .SH "COPYRIGHT"
 Copyright \(co 2013-2015 Alexey Filin.
 License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>.

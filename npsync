@@ -69,7 +69,8 @@ NPS_CORRUPTED_NPSYNC=79          # Corrupted line in npsync:// file
 NPS_DST_ITEM_DOES_NOT_EXIST=80   # Destination file/dir does not exist
 NPS_UNACCEPTABLE_NAME=81         # Unacceptable name of storage item
 NPS_COPY_FILE_FROM_CATALOGUE=82  # Files can't be copied from catalogue
-NPS_WRONG_MTIME_FORMAT=83        # Wrong mtime format
+NPS_WRONG_DST_MTIME_FORMAT=83    # Wrong destination mtime format
+NPS_WRONG_SRC_MTIME_FORMAT=84    # Wrong source mtime format
 
 #############################################################################
 # aux funcs
@@ -90,8 +91,12 @@ readonly NPS_OPTIONS_HELP="
              checksums are used if absent in catalogue.
   -c         The same as \`--create-dirs --create-files'.
   --copied FILE
-             Add to FILE names of source files and directories (to be) copied to
+             The same as \`--copied-dirs FILE --copied-files FILE'.
+  --copied-dirs FILE
+             Add to FILE names of source directories (to be) copied to
              destination.
+  --copied-files FILE
+             Add to FILE names of source files (to be) copied to destination.
   --create-dirs
              Create absent destination directories existing in source.
   --create-files
@@ -99,10 +104,10 @@ readonly NPS_OPTIONS_HELP="
   -d CRITERIA
              Set difference criteria for source-destination file comparison.
              CRITERIA is a comma-separated list of words: mtime, size, cks.
-               * mtime  if destination modification time older
-               * size   is file sizes are equal. If mtime has been tested,
+               * mtime  is destination modification time older
+               * size   are file sizes equal. If mtime has been tested,
                           then size is compared only if mtimes are equal.
-               * cks    is file checksums are equal
+               * cks    are file checksums equal
              Default list is empty, so no files will be compared.
   --exclude PATTERN
              Exclude source files matching extended bash(1) PATTERN.
@@ -111,15 +116,9 @@ readonly NPS_OPTIONS_HELP="
   --exclude-regex PATTERN
              Exclude source files matching regex(3) PATTERN.
   -f         Force execution, ignore errors.
-  --failed-cp FILE
-             Add to FILE names of source files failed to be copied to
-             destination.
-  --failed-mkdir FILE
-             Add to FILE names of source directories failed to be created in
-             destination.
-  --failed-sync-attrs FILE
-             Add to FILE names of source items failed to synchronize attributes
-             in destination.
+  --failed FILE
+             Add to FILE formatted records for files and directories failed
+             to be synced.
   -h         Print help and exit.
   -i         Prompt before modification.
   --include PATTERN
@@ -158,11 +157,20 @@ readonly NPS_OPTIONS_HELP="
                * mtime  modification time.
                * owner  uid and gid.
   --synced FILE
-             Add to FILE names of source files and directories with attributes
-             (to be) synchronized in destination. List generated in test
-             mode (files and dirs with attrs to be synced) may differ since:
+             The same as \`--synced-dirs FILE --synced-files FILE'.
+  --synced-dirs FILE
+             Add to FILE names of source directories with attributes (to be)
+             synchronized in destination. List generated in test mode
+             (files and dirs with attrs to be synced) may differ since:
                * Items absent in destination can't be checked (when option
-                 \`-c' is given).
+                 \`-c' is used).
+               * File copying changes mtime of parent dir.
+  --synced-files FILE
+             Add to FILE names of source files with attributes (to be)
+             synchronized in destination. List generated in test mode
+             (files and dirs with attrs to be synced) may differ since:
+               * Items absent in destination can't be checked (when option
+                 \`-c' is used).
                * File copying changes mtime of parent dir.
   -t         Test mode, don't perform real synchronization or copying, simply
              report potential problems and discover what is to be
@@ -197,8 +205,20 @@ function nps_echo2err() {
     echo "$NPS_UTIL_NAME: $*" >&2
 }
 
+# $1 -- utility
+# $2 -- error num
+function nps_save_failed_item_record() {
+    if [ -n "$NPS_FAILED_ITEMS_FILE" ]; then
+	local src_path=`nps_format_path "$NPS_SRC_VTTYPE" "$NPS_SRC_PATH" "$NPS_SRC_REL_PATH"`
+	local dst_path=`nps_format_path "$NPS_DST_VTTYPE" "$NPS_DST_PATH" "$NPS_DST_REL_PATH"`
+	echo "$1" "$2" "$src_path" "$dst_path" >> "$NPS_FAILED_ITEMS_FILE" || nps_echo2err "\`echo $1 $2 $src_path $dst_path >> \"$NPS_FAILED_ITEMS_FILE\"' failed with exit status $?"
+    fi
+}
+
+
 # print exit status of failed command and return last exit status
 function nps_failed() {
+    # save exit code of failed operation to return it
     local rv=$?
     case $rv in
 	$NPS_CMD_TERMINATED) nps_echo2err "\`$1' terminated after $NPS_CMD_TERM_TIMEOUT"
@@ -208,10 +228,11 @@ function nps_failed() {
 	*) nps_echo2err "\`$1' failed with exit status $rv"
 	    ;;
     esac
+    nps_save_failed_item_record "$1" "$rv"
     return $rv
 }
 
-# print path in nice way, update for a new storage type if required
+# print path in a nice way, update for a new storage type if required
 # $1 -- vt type
 # $2 -- root path
 # $3 -- relative path
@@ -298,13 +319,17 @@ function nps_perr() {
 	s1=`nps_format_path "$2" "$3" "$4"`
 	nps_echo2err "ERROR: $s1: Files can't be copied from catalogue"
 	;;
-    $NPS_WRONG_MTIME_FORMAT)
-        nps_echo2err "ERROR: \`$2': Wrong mtime format"
+    $NPS_WRONG_DST_MTIME_FORMAT)
+        nps_echo2err "ERROR: \`$2': Wrong destination mtime format"
+	;;
+    $NPS_WRONG_SRC_MTIME_FORMAT)
+        nps_echo2err "ERROR: \`$2': Wrong source mtime format"
 	;;
     *)
 	nps_echo2err "ERROR: $1: Wrong error code (internal error)"
 	;;
     esac
+    nps_save_failed_item_record "-" "$1"
 }
 
 # check for execution access
@@ -340,65 +365,65 @@ function nps_convert_src_to_dst_path() {
     return 0
 }
 
-# $1 -- compared mtime
-# $2 -- reference mtime
+# $1 -- destination mtime
+# $2 -- source mtime
 function nps_compare_mtime() {
-    local c_secs=
-    local c_nsecs=
-    local r_secs=
-    local r_nsecs=
+    local dst_secs=
+    local dst_nsecs=
+    local src_secs=
+    local src_nsecs=
     if [[ $1 =~ ^([[:digit:]]+)\.([[:digit:]]+)$ ]]; then
-	c_secs="${BASH_REMATCH[1]}"
-	c_nsecs="${BASH_REMATCH[2]}"
+	dst_secs="${BASH_REMATCH[1]}"
+	dst_nsecs="${BASH_REMATCH[2]}"
     elif [[ $1 =~ ^([[:digit:]]+)\.$ ]]; then
 	# nsecs could be skipped by negligence if equal to zero
-	c_secs="${BASH_REMATCH[1]}"
-	c_nsecs=0
+	dst_secs="${BASH_REMATCH[1]}"
+	dst_nsecs=0
     elif [[ $1 =~ ^([[:digit:]]+)$ ]]; then
-	c_secs="${BASH_REMATCH[1]}"
+	dst_secs="${BASH_REMATCH[1]}"
     else
-	nps_perr $NPS_WRONG_MTIME_FORMAT "$1"
-	return $NPS_WRONG_MTIME_FORMAT
+	nps_perr $NPS_WRONG_DST_MTIME_FORMAT "$1"
+	return $NPS_WRONG_DST_MTIME_FORMAT
     fi
     if [[ $2 =~ ^([[:digit:]]+)\.([[:digit:]]+)$ ]]; then
-	r_secs="${BASH_REMATCH[1]}"
-	r_nsecs="${BASH_REMATCH[2]}"
+	src_secs="${BASH_REMATCH[1]}"
+	src_nsecs="${BASH_REMATCH[2]}"
     elif [[ $2 =~ ^([[:digit:]]+)\.$ ]]; then
 	# nsecs could be skipped by negligence if equal to zero
-	r_secs="${BASH_REMATCH[1]}"
-	r_nsecs=0
+	src_secs="${BASH_REMATCH[1]}"
+	src_nsecs=0
     elif [[ $2 =~ ^([[:digit:]]+)$ ]]; then
-	r_secs="${BASH_REMATCH[1]}"
+	src_secs="${BASH_REMATCH[1]}"
     else
-	nps_perr $NPS_WRONG_MTIME_FORMAT "$2"
-	return $NPS_WRONG_MTIME_FORMAT
+	nps_perr $NPS_WRONG_SRC_MTIME_FORMAT "$2"
+	return $NPS_WRONG_SRC_MTIME_FORMAT
     fi
-    if [ "${#c_nsecs}" -eq 0 -o "${#r_nsecs}" -eq 0 ]; then
+    if [ "${#dst_nsecs}" -eq 0 -o "${#src_nsecs}" -eq 0 ]; then
 	# zero nsecs if one of mtimes doesn't provide it
-	c_nsecs=0
-	r_nsecs=0
-    elif [ "${#c_nsecs}" -ne "${#r_nsecs}" ]; then
+	dst_nsecs=0
+	src_nsecs=0
+    elif [ "${#dst_nsecs}" -ne "${#src_nsecs}" ]; then
 	# nsecs comparison is to take into account skipped orders
-	if [ "${#c_nsecs}" -gt "${#r_nsecs}" ]; then
-	    local d=$(( ${#c_nsecs} - ${#r_nsecs} ))
+	if [ "${#dst_nsecs}" -gt "${#src_nsecs}" ]; then
+	    local d=$(( ${#dst_nsecs} - ${#src_nsecs} ))
 	    local tail=
 	    printf -v tail "%0${d}i" 0
-	    r_nsecs="$r_nsecs$tail"
+	    src_nsecs="$src_nsecs$tail"
 	else
-	    local d=$(( ${#r_nsecs} - ${#c_nsecs} ))
+	    local d=$(( ${#src_nsecs} - ${#dst_nsecs} ))
 	    local tail=
 	    printf -v tail "%0${d}i" 0
-	    c_nsecs="$c_nsecs$tail"
+	    dst_nsecs="$dst_nsecs$tail"
 	fi
     fi
     # else arithmetic expansion evaluates number with prefix '0' to octal
-    r_nsecs="10#$r_nsecs"
-    c_nsecs="10#$c_nsecs"
-    if (( "$c_secs" == "$r_secs" && "$c_nsecs" == "$r_nsecs" )); then
+    src_nsecs="10#$src_nsecs"
+    dst_nsecs="10#$dst_nsecs"
+    if (( "$dst_secs" == "$src_secs" && "$dst_nsecs" == "$src_nsecs" )); then
 	echo "same_age"
-    elif (( "$c_secs" < "$r_secs" )); then
+    elif (( "$dst_secs" < "$src_secs" )); then
 	echo "older"
-    elif (( "$c_secs" == "$r_secs" && "$c_nsecs" < "$r_nsecs" )); then
+    elif (( "$dst_secs" == "$src_secs" && "$dst_nsecs" < "$src_nsecs" )); then
 	echo "older"
     else
 	echo "newer"
@@ -640,8 +665,8 @@ if [ -x '/bin/cp' ]; then
 	fi
     }
 
-    # $1 -- compared mtime
-    # $2 -- reference mtime
+    # $1 -- destination mtime
+    # $2 -- source mtime
     function posix_compare_mtime() {
 	nps_compare_mtime "$1" "$2"
     }
@@ -936,8 +961,8 @@ if [ -x '/usr/bin/rfcp' ]; then
 	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_NSRM" -f "$s" || { nps_failed "$NPS_NSRM -f \"$s\""; return $?; }
     }
 
-    # $1 -- compared mtime
-    # $2 -- reference mtime
+    # $1 -- destination mtime
+    # $2 -- source mtime
     function rfio_compare_mtime() {
 	[ -z "$1" -o -z "$2" ] && return 1
 	# NB: seconds are ignored by castor
@@ -1216,8 +1241,8 @@ function npsync_rm() {
     return 0
 }
 
-# $1 -- compared mtime
-# $2 -- reference mtime
+# $1 -- destination mtime
+# $2 -- source mtime
 function npsync_compare_mtime() {
     nps_compare_mtime "$1" "$2"
 }
@@ -1523,8 +1548,10 @@ function nps_sync_attrs() {
 	fi
     fi
 
-    [ $updated -ne 0 ] && { nps_save_path_to_file "$1" "$2" "$3" "$NPS_SYNCED_ITEMS_FILE" || return $?; }
-
+    if [ $updated -ne 0 ]; then
+	[ "$9" == 'd' ] && nps_save_path_to_file "$1" "$2" "$3" "$NPS_SYNCED_DIRS_FILE" || return $?
+	[ "$9" == '-' ] && nps_save_path_to_file "$1" "$2" "$3" "$NPS_SYNCED_FILES_FILE" || return $?
+    fi
     if [ -n "$NPS_NPSYNCINFO_FILE" ]; then
 	[ $NPS_VERBOSE_OUTPUT -gt 2 ] && echo "getting size of source "`nps_format_path "$1" "$2" "$3"`
 	local src_size=`nps_get_size "$1" "$2" "$3"` || return $?
@@ -1551,7 +1578,7 @@ function nps_copy_file() {
 	    ${nps_vtfuncs["$4_compare_cks"]} "$1" "$2" "$3" "$5" "$6" "$7" "$8" || return $?
 	fi
     fi
-    nps_save_path_to_file "$1" "$2" "$3" "$NPS_COPIED_ITEMS_FILE"
+    nps_save_path_to_file "$1" "$2" "$3" "$NPS_COPIED_FILES_FILE"
 }
 
 # $1 -- source vt type
@@ -1695,7 +1722,7 @@ function nps_make_dir() {
 	[ $NPS_VERBOSE_OUTPUT -gt 1 ] && echo "creating destination directory "`nps_format_path "$4" "$5" "$6"`
 	${nps_vtfuncs["$4_mkdir"]} "$1" "$2" "$3" "$5" "$6" || return $?
     fi
-    nps_save_path_to_file "$1" "$2" "$3" "$NPS_COPIED_ITEMS_FILE" || return $?
+    nps_save_path_to_file "$1" "$2" "$3" "$NPS_COPIED_DIRS_FILE" || return $?
     return 0
 }
 
@@ -1794,6 +1821,9 @@ function nps_sync_dir() {
     local OIFS="$IFS"
     IFS='
 '
+    local save_NPS_SRC_REL_PATH="$NPS_SRC_REL_PATH"
+    local save_NPS_DST_REL_PATH="$NPS_DST_REL_PATH"
+
     #${nps_vtfuncs["$1_ls"]} "$2" "$3" | while read item_name; do # <- var assignement is not visible outside
     # NB: a long list requires a lot of memory
     local item_name
@@ -1814,7 +1844,11 @@ function nps_sync_dir() {
 	if [ $rv -eq 0 ]; then
 	    src_item_path=`${nps_vtfuncs["$1_item_path"]} "$3" "$item_name"`
 	    dst_item_path=`${nps_vtfuncs["$4_item_path"]} "$6" "$item_name"`
+	    NPS_SRC_REL_PATH="$src_item_path"
+	    NPS_DST_REL_PATH="$dst_item_path"
 	    nps_sync_item "$1" "$2" "$src_item_path" "$4" "$5" "$dst_item_path" || rv=$?
+	    NPS_SRC_REL_PATH="$save_NPS_SRC_REL_PATH"
+	    NPS_DST_REL_PATH="$save_NPS_DST_REL_PATH"
 	fi
 	if [ $rv -ne 0 ]; then
 	    [ $save_rv -eq 0 ] && save_rv=$rv
@@ -2005,22 +2039,28 @@ function nps_sync_src_npsync() {
     local item_path=
     local item_name=
     local item=
+    NPS_SRC_REL_PATH=
+    NPS_DST_REL_PATH=
 
     for key in "${!nps_src_file_type[@]}"; do
+	NPS_NPSYNC_ITEM_PATH="$key"
+	NPS_SRC_REL_PATH="$key"
+	NPS_DST_REL_PATH=
 	# src and dst can use different decorations and separators in paths,
 	# we should handle them correctly
 	item_path=`${nps_vtfuncs["$1_leaf_path"]} "$key"`
 	if [ -n "$item_path"  ]; then
 	    item_path="${nps_src_dst_path_map[$item_path]}"
 	    [ -z "$item_path" ] && rv=$NPS_UNACCEPTABLE_NAME
+	    # the error was reported in nps_load_npsync
 	fi
 	item_name=`${nps_vtfuncs["$1_leaf_item"]} "$key"`
-	NPS_NPSYNC_ITEM_PATH="$key"
 	if [ $rv -eq 0 ]; then
 	    ${nps_vtfuncs["$3_is_item_name"]} "$item_name" || rv=$?
 	fi
 	if [ $rv -eq 0 ]; then
 	    item=`${nps_vtfuncs["$3_item_path"]} "$item_path" "$item_name"`
+	    NPS_DST_REL_PATH="$item"
 	    nps_sync_item "$1" "$2" "$key" "$3" "$4" "$item" || rv=$?
 	else
 	    [ $NPS_VERBOSE_OUTPUT -gt 0 ] && echo "\`$key': skipped because of unacceptable name"
@@ -2064,6 +2104,10 @@ function nps_save_dst_npsync() {
 
 NPS_RV=0
 NPS_SAVE_RV=0
+# current source relative path
+NPS_SRC_REL_PATH=
+# current destination relative path
+NPS_DST_REL_PATH=
 
 unset NPS_SOURCES
 declare -a NPS_SOURCES
@@ -2078,8 +2122,10 @@ NPS_DO_NESTED_COPYING=0
 NPS_NESTING_LEVEL=0
 NPS_MAX_NESTING_LEVEL=0
 NPS_TEST_MODE=0
-NPS_COPIED_ITEMS_FILE=
-NPS_SYNCED_ITEMS_FILE=
+NPS_COPIED_DIRS_FILE=
+NPS_COPIED_FILES_FILE=
+NPS_SYNCED_DIRS_FILE=
+NPS_SYNCED_FILES_FILE=
 unset NPS_DIFFERENCE_CRITERIA
 declare -A NPS_DIFFERENCE_CRITERIA
 NPS_DIFFERENCE_CRITERIA['mtime']=0
@@ -2138,9 +2184,7 @@ declare -A nps_aux_file_size
 unset nps_aux_file_mtime
 declare -A nps_aux_file_mtime
 
-NPS_FAILED_CP_FILE=
-NPS_FAILED_MKDIR_FILE=
-NPS_FAILED_SYNC_ATTRS_FILE=
+NPS_FAILED_ITEMS_FILE=
 
 NPS_OMIT_COPY_CKS_CHECK=0
 
@@ -2198,7 +2242,16 @@ while [ $# -gt 0 ]; do
 	    NPS_CREATE_ABSENT_FILE=1
 	    ;;
 	--copied) [ -z "$2" ] && { nps_perr $NPS_WRONG_ARGS "$1"; exit $NPS_WRONG_ARGS; }
-	    NPS_COPIED_ITEMS_FILE="$2"
+	    NPS_COPIED_DIRS_FILE="$2"
+	    NPS_COPIED_FILES_FILE="$2"
+	    shift
+	    ;;
+	--copied-dirs) [ -z "$2" ] && { nps_perr $NPS_WRONG_ARGS "$1"; exit $NPS_WRONG_ARGS; }
+	    NPS_COPIED_DIRS_FILE="$2"
+	    shift
+	    ;;
+	--copied-files) [ -z "$2" ] && { nps_perr $NPS_WRONG_ARGS "$1"; exit $NPS_WRONG_ARGS; }
+	    NPS_COPIED_FILES_FILE="$2"
 	    shift
 	    ;;
 	--create-dirs) NPS_CREATE_ABSENT_DIR=1
@@ -2252,16 +2305,8 @@ while [ $# -gt 0 ]; do
 	    ;;
 	-f) NPS_IGNORE_ERRORS=1
 	    ;;
-	--failed-cp) [ -z "$2" ] && { nps_perr $NPS_WRONG_ARGS "$1"; exit $NPS_WRONG_ARGS; }
-	    NPS_FAILED_CP_FILE="$2"
-	    shift
-	    ;;
-	--failed-mkdir) [ -z "$2" ] && { nps_perr $NPS_WRONG_ARGS "$1"; exit $NPS_WRONG_ARGS; }
-	    NPS_FAILED_MKDIR_FILE="$2"
-	    shift
-	    ;;
-	--failed-sync-attrs) [ -z "$2" ] && { nps_perr $NPS_WRONG_ARGS "$1"; exit $NPS_WRONG_ARGS; }
-	    NPS_FAILED_SYNC_ATTRS_FILE="$2"
+	--failed) [ -z "$2" ] && { nps_perr $NPS_WRONG_ARGS "$1"; exit $NPS_WRONG_ARGS; }
+	    NPS_FAILED_ITEMS_FILE="$2"
 	    shift
 	    ;;
 	-h) nps_usage "$NPS_UTIL_NAME"
@@ -2371,7 +2416,16 @@ while [ $# -gt 0 ]; do
 	    shift
 	    ;;
 	--synced) [ -z "$2" ] && { nps_perr $NPS_WRONG_ARGS "$1"; exit $NPS_WRONG_ARGS; }
-	    NPS_SYNCED_ITEMS_FILE="$2"
+	    NPS_SYNCED_DIRS_FILE="$2"
+	    NPS_SYNCED_FILES_FILE="$2"
+	    shift
+	    ;;
+	--synced-dirs) [ -z "$2" ] && { nps_perr $NPS_WRONG_ARGS "$1"; exit $NPS_WRONG_ARGS; }
+	    NPS_SYNCED_DIRS_FILE="$2"
+	    shift
+	    ;;
+	--synced-files) [ -z "$2" ] && { nps_perr $NPS_WRONG_ARGS "$1"; exit $NPS_WRONG_ARGS; }
+	    NPS_SYNCED_FILES_FILE="$2"
 	    shift
 	    ;;
 	-t) [ "${#NPS_NPSYNCINFO_FILE}" -ne 0 ] && { nps_perr $NPS_WRONG_ARGS "$1"; exit $NPS_WRONG_ARGS; }
@@ -2501,9 +2555,9 @@ for name in "${NPS_SOURCES[*]}"; do
     NPS_SRC_VTTYPE="${nps_vttypes[$?]}"
     # don't touch above
 
-    NPS_SRC_ROOT_PATH=`${nps_vtfuncs["${NPS_SRC_VTTYPE}_leaf_path"]} "$NPS_SRC_PATH"`
-
     NPS_RV=0
+    NPS_SRC_REL_PATH=
+    NPS_DST_REL_PATH=
     # `declare -g' is not implemented in bash version <= 4.1
     if [ "$NPS_SRC_VTTYPE" == 'npsync://' ]; then
         # file name -> file type
@@ -2548,7 +2602,9 @@ for name in "${NPS_SOURCES[*]}"; do
     else
 	NPS_SRC_NAME=`${nps_vtfuncs["${NPS_SRC_VTTYPE}_leaf_item"]} "$NPS_SRC_PATH"`
 	NPS_NPSYNC_ITEM_PATH="$NPS_SRC_NAME"
-	[ $NPS_RV -eq 0 ] && { nps_sync_item "$NPS_SRC_VTTYPE" "$NPS_SRC_ROOT_PATH" "$NPS_SRC_NAME" "$NPS_DST_VTTYPE" "$NPS_DST_PATH" "$NPS_SRC_NAME" || NPS_RV=$?; }
+	NPS_SRC_PATH=`${nps_vtfuncs["${NPS_SRC_VTTYPE}_rm_separator"]} "$NPS_SRC_PATH"`
+	NPS_DST_REL_PATH="$NPS_SRC_NAME"
+	[ $NPS_RV -eq 0 ] && { nps_sync_item "$NPS_SRC_VTTYPE" "$NPS_SRC_PATH" "" "$NPS_DST_VTTYPE" "$NPS_DST_PATH" "$NPS_SRC_NAME" || NPS_RV=$?; }
     fi
     unset NPS_SRC_PATH
     if [ $NPS_RV -ne 0 ]; then
