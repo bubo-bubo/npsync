@@ -76,7 +76,7 @@ NPS_WRONG_SRC_MTIME_FORMAT=84    # Wrong source mtime format
 # aux funcs
 
 readonly NPS_UTIL_NAME="$0"
-readonly NPS_UTIL_VERSION=0x30301
+readonly NPS_UTIL_VERSION=0x30303
 readonly NPS_UTIL_LICENSE="Copyright (C) 2013-2015 Alexey Filin
 License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>.
 This is free software: you are free to change and redistribute it.
@@ -205,13 +205,13 @@ function nps_echo2err() {
     echo "$NPS_UTIL_NAME: $*" >&2
 }
 
-# $1 -- utility
-# $2 -- error num
+# $1 -- error num
+# $2 -- utility
 function nps_save_failed_item_record() {
     if [ -n "$NPS_FAILED_ITEMS_FILE" ]; then
 	local src_path=`nps_format_path "$NPS_SRC_VTTYPE" "$NPS_SRC_PATH" "$NPS_SRC_REL_PATH"`
 	local dst_path=`nps_format_path "$NPS_DST_VTTYPE" "$NPS_DST_PATH" "$NPS_DST_REL_PATH"`
-	echo "$1" "$2" "$src_path" "$dst_path" >> "$NPS_FAILED_ITEMS_FILE" || nps_echo2err "\`echo $1 $2 $src_path $dst_path >> \"$NPS_FAILED_ITEMS_FILE\"' failed with exit status $?"
+	echo "$1" "\`$2'" "$src_path" "$dst_path" >> "$NPS_FAILED_ITEMS_FILE" || nps_echo2err "\`echo $1 $2 $src_path $dst_path >> \"$NPS_FAILED_ITEMS_FILE\"' failed with exit status $?"
     fi
 }
 
@@ -228,7 +228,7 @@ function nps_failed() {
 	*) nps_echo2err "\`$1' failed with exit status $rv"
 	    ;;
     esac
-    nps_save_failed_item_record "$1" "$rv"
+    nps_save_failed_item_record "$rv" "$1"
     return $rv
 }
 
@@ -329,7 +329,7 @@ function nps_perr() {
 	nps_echo2err "ERROR: $1: Wrong error code (internal error)"
 	;;
     esac
-    nps_save_failed_item_record "-" "$1"
+    nps_save_failed_item_record "$1" "-"
 }
 
 # check for execution access
@@ -1658,7 +1658,7 @@ function nps_sync_file() {
 	    [ $NPS_VERBOSE_OUTPUT -gt 2 ] && echo "getting checksum type of source "`nps_format_path "$1" "$2" "$3"`
 	    src_cks_type=`nps_get_cks_type "$1" "$2" "$3"` || return $?
 	    [ $NPS_VERBOSE_OUTPUT -gt 2 ] && echo "getting checksum type of destination "`nps_format_path "$4" "$5" "$6"`
-	    dst_cks_type=`nps_get_cks_type "$4" "$5" "$6"` || return $?
+	    dst_cks_type=`${nps_vtfuncs["$4_get_cks_type"]} "$5" "$6"` || return $?
 	    if [ "$dst_cks_type" != "$src_cks_type" ]; then
 		nps_perr $NPS_CKS_TYPE_MISMATCH "$src_cks_type" "$1" "$2" "$3" "$dst_cks_type" "$4" "$5" "$6"
 		return $NPS_CKS_TYPE_MISMATCH
@@ -1666,7 +1666,7 @@ function nps_sync_file() {
 	    [ $NPS_VERBOSE_OUTPUT -gt 1 ] && echo "getting checksum of source "`nps_format_path "$1" "$2" "$3"`
 	    src_cks=`nps_get_cks "$1" "$2" "$3" "$src_cks_type"` || return $?
 	    [ $NPS_VERBOSE_OUTPUT -gt 1 ] && echo "getting checksum of destination "`nps_format_path "$4" "$5" "$6"`
-	    local dst_cks=`nps_get_cks "$4" "$5" "$6" "$dst_cks_type"` || return $?
+	    local dst_cks=`${nps_vtfuncs["$4_get_cks"]} "$5" "$6" "$dst_cks_type"` || return $?
 	    if [[ "0x$dst_cks" -ne "0x$src_cks" ]]; then
 		[ $NPS_VERBOSE_OUTPUT -gt 0 ] && echo "$dst_cks != $src_cks: $src_cks_type checksum mismatch between destination "`nps_format_path "$4" "$5" "$6"`" and source "`nps_format_path "$1" "$2" "$3"`
 		remove_destination_file=1
@@ -1685,11 +1685,11 @@ function nps_sync_file() {
 	if [ $remove_destination_file -ne 0 ]; then
 	    if [ $NPS_INTERACTIVE_RUN -eq 0 ] || nps_user_agreed "Replace file "`nps_format_path "$4" "$5" "$6"`"?"; then
 		[ $NPS_TEST_MODE -eq 0 ] && { ${nps_vtfuncs["$4_rm"]} "$5" "$6" || return $?; }
-		nps_copy_file "$1" "$2" "$3" "$4" "$5" "$6" "$src_cks" "$src_cks_type" || { rv=$?; [ -n "$NPS_FAILED_CP_FILE" ] && nps_save_path_to_file "$1" "$2" "$3" "$NPS_FAILED_CP_FILE"; return $rv; }
+		nps_copy_file "$1" "$2" "$3" "$4" "$5" "$6" "$src_cks" "$src_cks_type" || return $?
 	    fi
 	else
 	    if [ $NPS_INTERACTIVE_RUN -eq 0 ] || nps_user_agreed "Create file "`nps_format_path "$4" "$5" "$6"`"?"; then
-		nps_copy_file "$1" "$2" "$3" "$4" "$5" "$6" "$src_cks" "$src_cks_type" || { rv=$?; [ -n "$NPS_FAILED_CP_FILE" ] && nps_save_path_to_file "$1" "$2" "$3" "$NPS_FAILED_CP_FILE"; return $rv; }
+		nps_copy_file "$1" "$2" "$3" "$4" "$5" "$6" "$src_cks" "$src_cks_type" || return $?
 	    fi
 	fi
 
@@ -1702,11 +1702,11 @@ function nps_sync_file() {
 	    local save_INTERACTIVE_RUN=$NPS_INTERACTIVE_RUN # save global var
 	    # skip questions if file has been copied
 	    NPS_INTERACTIVE_RUN=0
-	    nps_sync_attrs "$1" "$2" "$3" "$4" "$5" "$6" "$src_cks" "$src_cks_type" "-" || { rv=$?; [ -n "$NPS_FAILED_SYNC_ATTRS_FILE" ] && nps_save_path_to_file "$1" "$2" "$3" "$NPS_FAILED_SYNC_ATTRS_FILE"; }
+	    nps_sync_attrs "$1" "$2" "$3" "$4" "$5" "$6" "$src_cks" "$src_cks_type" "-" || rv=$?
 	    NPS_INTERACTIVE_RUN=$save_INTERACTIVE_RUN # restore global var
 	fi
     elif [ $sync_file_attributes -ne 0 ]; then
-	nps_sync_attrs "$1" "$2" "$3" "$4" "$5" "$6" "$src_cks" "$src_cks_type" "-" || { rv=$?; [ -n "$NPS_FAILED_SYNC_ATTRS_FILE" ] && nps_save_path_to_file "$1" "$2" "$3" "$NPS_FAILED_SYNC_ATTRS_FILE"; }
+	nps_sync_attrs "$1" "$2" "$3" "$4" "$5" "$6" "$src_cks" "$src_cks_type" "-" || rv=$?
     fi
     return $rv
 }
@@ -1893,7 +1893,7 @@ function nps_sync_item() {
 			    if [ $NPS_CREATE_ABSENT_DIR -ne 0 ]; then
 				[ $NPS_VERBOSE_OUTPUT -gt 0 ] && echo "absent destination directory "`nps_format_path "$4" "$5" "$6"`", source directory "`nps_format_path "$1" "$2" "$3"`
 				if [ $NPS_INTERACTIVE_RUN -eq 0 ] || nps_user_agreed "Create directory "`nps_format_path "$4" "$5" "$6"`"?"; then
-				    nps_make_dir "$1" "$2" "$3" "$4" "$5" "$6" || { rv=$?; [ -n "$NPS_FAILED_MKDIR_FILE" ] && nps_save_path_to_file "$1" "$2" "$3" "$NPS_FAILED_MKDIR_FILE"; }
+				    nps_make_dir "$1" "$2" "$3" "$4" "$5" "$6" || rv=$?
 				    [ $rv -eq 0 ] && sync_dir_items=1
 				    # no directory created in test mode
 				    if [ $NPS_TEST_MODE -eq 0 -a $rv -eq 0 ]; then
@@ -1933,7 +1933,7 @@ function nps_sync_item() {
 				local save_INTERACTIVE_RUN=$NPS_INTERACTIVE_RUN # save global var
 			        # skip questions if directory has been created
 				[ $sync_dir_attributes -eq 1 ] && NPS_INTERACTIVE_RUN=0
-				nps_sync_attrs "$1" "$2" "$3" "$4" "$5" "$6" "$NPS_DIR_CKS" "$NPS_DIR_CKS_TYPE" "d" || { rv2=$?; [ -n "$NPS_FAILED_SYNC_ATTRS_FILE" ] && nps_save_path_to_file "$1" "$2" "$3" "$NPS_FAILED_SYNC_ATTRS_FILE"; }
+				nps_sync_attrs "$1" "$2" "$3" "$4" "$5" "$6" "$NPS_DIR_CKS" "$NPS_DIR_CKS_TYPE" "d" || rv2=$?
 				NPS_INTERACTIVE_RUN=$save_INTERACTIVE_RUN # restore global var
 			    fi
 			    NPS_FILE_COPIED_FLAG=0

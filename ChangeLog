@@ -1,8 +1,15 @@
+2015-03-03  Alexey Filin
+
+	* clean up
+	* fix for --aux-npsync
+
+	Version 3.3.3
+
 2015-03-02  Alexey Filin
 
 	* add --copied-dirs and --copied-files. stager_get rejects dirs
 	* add --synced-dirs and --synced-files
-	* replace --failed-* with --failed, output is formatte
+	* replace --failed-* with --failed, output is formatted
 	* fix: NPS_SRC_ROOT_PATH + NPS_SRC_NAME -> NPS_SRC_PATH + ''
 
 2015-02-27  Alexey Filin
