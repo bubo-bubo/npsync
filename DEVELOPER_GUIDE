@@ -74,6 +74,13 @@ primitives in bash, interactive mode and error handling make concurrency too
 complex and error-prone. Concurrent independent npsync execution is to be used
 instead.
 
+npsync was designed to be a framework for interfaces to non-POSIX storages.
+It organizes low-level operations to perform required synchronization.
+Advanced optimizations like multi-stream transfer, asynchronous execution,
+incremented back-up etc. are to be implemented either on lower level (storage
+interface utilities) or on higher level (e.g. with scheduling scripts using
+npsync).
+
 An interface to a storage can be implemented as a file. Paths to interface
 files are to be pointed with option --npsync-interface or with environment
 variable NPS_INTERFACE_FILES as a colon-separated list.
