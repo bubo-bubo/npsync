@@ -1379,7 +1379,7 @@ function nps_copy_SYNCED_FILE_ATTRS() {
 # $4 -- checksum type
 function nps_get_cks() {
     local cks=
-    if [ -z "$NPS_AUX_NPSYNC_FILE" -o ${#nps_aux_file_cks["$3"]} -eq 0 ]; then
+    if [ -z "$NPS_AUX_NPSYNC_FILE" ] || [ -z "$3" ] || [ ${#nps_aux_file_cks["$3"]} -eq 0 ]; then
 	cks=`${nps_vtfuncs["$1_get_cks"]} "$2" "$3" "$4"` || return $?
     else
 	cks=${nps_aux_file_cks["$3"]}
@@ -1393,7 +1393,7 @@ function nps_get_cks() {
 # $3 -- file relative path
 function nps_get_cks_type() {
     local cks_type=
-    if [ -z "$NPS_AUX_NPSYNC_FILE" -o ${#nps_aux_file_cks_type["$3"]} -eq 0 ]; then
+    if [ -z "$NPS_AUX_NPSYNC_FILE" ] || [ -z "$3" ] || [ ${#nps_aux_file_cks_type["$3"]} -eq 0 ]; then
 	cks_type=`${nps_vtfuncs["$1_get_cks_type"]} "$2" "$3"` || return $?
     else
 	cks_type=${nps_aux_file_cks_type["$3"]}
@@ -1410,7 +1410,7 @@ function nps_get_cks_type() {
 # $3 -- file relative path
 function nps_get_mode() {
     local mode=
-    if [ -z "$NPS_AUX_NPSYNC_FILE" -o ${#nps_aux_file_mode["$3"]} -eq 0 ]; then
+    if [ -z "$NPS_AUX_NPSYNC_FILE" ] || [ -z "$3" ] || [ ${#nps_aux_file_mode["$3"]} -eq 0 ]; then
 	mode=`${nps_vtfuncs["$1_get_mode"]} "$2" "$3"` || return $?
     else
 	mode=${nps_aux_file_mode["$3"]}
@@ -1424,7 +1424,7 @@ function nps_get_mode() {
 # $3 -- file relative path
 function nps_get_owner() {
     local owner=
-    if [ -z "$NPS_AUX_NPSYNC_FILE" -o ${#nps_aux_file_owner["$3"]} -eq 0 ]; then
+    if [ -z "$NPS_AUX_NPSYNC_FILE" ] || [ -z "$3" ] || [ ${#nps_aux_file_owner["$3"]} -eq 0 ]; then
 	owner=`${nps_vtfuncs["$1_get_owner"]} "$2" "$3"` || return $?
     else
 	owner=${nps_aux_file_owner["$3"]}
@@ -1438,7 +1438,7 @@ function nps_get_owner() {
 # $3 -- file relative path
 function nps_get_mtime() {
     local mtime=
-    if [ -z "$NPS_AUX_NPSYNC_FILE" -o ${#nps_aux_file_mtime["$3"]} -eq 0 ]; then
+    if [ -z "$NPS_AUX_NPSYNC_FILE" ] || [ -z "$3" ] || [ ${#nps_aux_file_mtime["$3"]} -eq 0 ]; then
 	mtime=`${nps_vtfuncs["$1_get_mtime"]} "$2" "$3"` || return $?
     else
 	mtime=${nps_aux_file_mtime["$3"]}
@@ -1452,7 +1452,7 @@ function nps_get_mtime() {
 # $3 -- file relative path
 function nps_get_size() {
     local size=
-    if [ -z "$NPS_AUX_NPSYNC_FILE" -o ${#nps_aux_file_size["$3"]} -eq 0 ]; then
+    if [ -z "$NPS_AUX_NPSYNC_FILE" ] || [ -z "$3" ] || [ ${#nps_aux_file_size["$3"]} -eq 0 ]; then
 	size=`${nps_vtfuncs["$1_get_size"]} "$2" "$3"` || return $?
     else
 	size=${nps_aux_file_size["$3"]}
@@ -1549,9 +1549,13 @@ function nps_sync_attrs() {
     fi
 
     if [ $updated -ne 0 ]; then
-	[ "$9" == 'd' ] && nps_save_path_to_file "$1" "$2" "$3" "$NPS_SYNCED_DIRS_FILE" || return $?
-	[ "$9" == '-' ] && nps_save_path_to_file "$1" "$2" "$3" "$NPS_SYNCED_FILES_FILE" || return $?
+	if [ "$9" == 'd' -a -n "$NPS_SYNCED_DIRS_FILE" ]; then
+	    nps_save_path_to_file "$1" "$2" "$3" "$NPS_SYNCED_DIRS_FILE" || return $?
+	elif [ "$9" == '-' -a -n "$NPS_SYNCED_FILES_FILE" ]; then
+	    nps_save_path_to_file "$1" "$2" "$3" "$NPS_SYNCED_FILES_FILE" || return $?
+	fi
     fi
+
     if [ -n "$NPS_NPSYNCINFO_FILE" ]; then
 	[ $NPS_VERBOSE_OUTPUT -gt 2 ] && echo "getting size of source "`nps_format_path "$1" "$2" "$3"`
 	local src_size=`nps_get_size "$1" "$2" "$3"` || return $?

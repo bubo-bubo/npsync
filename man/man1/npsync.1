@@ -30,7 +30,13 @@ Storage attributes and checksums are used if absent in catalogue.
 The same as \`--create-dirs --create-files'.
 .TP 11
 \fB--copied\fP \fIFILE\fP
-Add to \fIFILE\fP names of source files and directories (to be) copied to \fIDST\fP.
+The same as \`--copied-dirs FILE --copied-files FILE'.
+.TP 11
+\fB--copied-dirs\fP \fIFILE\fP
+Add to \fIFILE\fP names of source directories (to be) copied to destination.
+.TP 11
+\fB--copied-files\fP \fIFILE\fP
+Add to \fIFILE\fP names of source files (to be) copied to destination.
 .TP 11
 \fB--create-dirs\fP
 Create absent destination directories existing in source.
@@ -136,12 +142,26 @@ uid and gid.
 .RE
 .TP 11
 \fB--synced\fP \fIFILE\fP
-Add to \fIFILE\fP names of source files and directories with attributes
-(to be) synchronized in destination. List generated in test
-mode (files and dirs with attrs to be synced) may differ since:
+The same as \`--synced-dirs FILE --synced-files FILE'
+.TP 11
+\fB--synced-dirs\fP \fIFILE\fP
+Add to \fIFILE\fP names of source directories with attributes (to be)
+synchronized in destination. List generated in test mode (dirs with attrs
+to be synced) may differ since:
 .RS 11
 .IP "  *" 4
-Items absent in destination can't be checked (when option \`-c' is given).
+Directories absent in destination can't be checked (when option \`-c' is given).
+.IP "  *" 4
+File copying changes mtime of parent dir.
+.RE
+.TP 11
+\fB--synced-files\fP \fIFILE\fP
+Add to \fIFILE\fP names of source files with attributes (to be)
+synchronized in destination. List generated in test mode (files with attrs
+to be synced) may differ since:
+.RS 11
+.IP "  *" 4
+Files absent in destination can't be checked (when option \`-c' is given).
 .IP "  *" 4
 File copying changes mtime of parent dir.
 .RE
@@ -249,9 +269,9 @@ Destination file or directory is ignored if it is absent in source.
 An error happens in inverse case.
 If \fISRC\fP is alone swap it with \fIDST\fP in argument list and run \fBnpsync\fP in test mode to discover destination files or directories absent in source, e.g.:
 .IP "" 4
-npsync -a -t -f a/b/item c/d
+npsync -a -t -f a/b/name c/d
 .IP "" 4
-npsync -a -t -f c/d/item a/b
+npsync -a -t -f c/d/name a/b
 .LP
 Be careful, attribute synchronization can change destination directory mtime so a destination file absent in source can become newer than its parent directory.
 .LP
@@ -469,7 +489,7 @@ Interface utilities could bypass FUSE to accelerate access to the FS.
 File and directory names can be converted somehow for syncing with storage function _item_path.
 So a storage interface can provide specific path composition or translate names from one language to another.
 .IP "  *" 4
-The utility was written in bash, so can be easily adapted by user e.g. to perform additional actions for synchronization or copying.
+The utility was written in bash, so can be easily adapted by user e.g. to perform additional actions for synchronization or comparison.
 .SH "SEE ALSO"
 .IP "POSIX FS: " 10
 \fIcp\fP, \fIls\fP, \fImkdir\fP, \fItouch\fP, \fIchmod\fP, \fIchown\fP, \fIstat\fP, \fIrm\fP

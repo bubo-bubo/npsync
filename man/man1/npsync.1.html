@@ -46,7 +46,11 @@ Storage attributes and checksums are used if absent in catalogue.
 <DT><B>-c</B><DD>
 The same as `--create-dirs --create-files'.
 <DT><B>--copied</B> <I>FILE</I><DD>
-Add to <I>FILE</I> names of source files and directories (to be) copied to <I>DST</I>.
+The same as `--copied-dirs FILE --copied-files FILE'.
+<DT><B>--copied-dirs</B> <I>FILE</I><DD>
+Add to <I>FILE</I> names of source directories (to be) copied to destination.
+<DT><B>--copied-files</B> <I>FILE</I><DD>
+Add to <I>FILE</I> names of source files (to be) copied to destination.
 <DT><B>--create-dirs</B><DD>
 Create absent destination directories existing in source.
 <DT><B>--create-files</B><DD>
@@ -139,13 +143,28 @@ uid and gid.
 </DL>
 
 <DT><B>--synced</B> <I>FILE</I><DD>
-Add to <I>FILE</I> names of source files and directories with attributes
-(to be) synchronized in destination. List generated in test
-mode (files and dirs with attrs to be synced) may differ since:
+The same as `--synced-dirs FILE --synced-files FILE'
+<DT><B>--synced-dirs</B> <I>FILE</I><DD>
+Add to <I>FILE</I> names of source directories with attributes (to be)
+synchronized in destination. List generated in test mode (dirs with attrs
+to be synced) may differ since:
 <DL COMPACT><DT><DD>
 <DL COMPACT>
 <DT>  *<DD>
-Items absent in destination can't be checked (when option `-c' is given).
+Directories absent in destination can't be checked (when option `-c' is given).
+<DT>  *<DD>
+File copying changes mtime of parent dir.
+</DL>
+</DL>
+
+<DT><B>--synced-files</B> <I>FILE</I><DD>
+Add to <I>FILE</I> names of source files with attributes (to be)
+synchronized in destination. List generated in test mode (files with attrs
+to be synced) may differ since:
+<DL COMPACT><DT><DD>
+<DL COMPACT>
+<DT>  *<DD>
+Files absent in destination can't be checked (when option `-c' is given).
 <DT>  *<DD>
 File copying changes mtime of parent dir.
 </DL>
@@ -282,9 +301,9 @@ An error happens in inverse case.
 If <I>SRC</I> is alone swap it with <I>DST</I> in argument list and run <B>npsync</B> in test mode to discover destination files or directories absent in source, e.g.:
 <DL COMPACT>
 <DT><DD>
-npsync -a -t -f a/b/item c/d
+npsync -a -t -f a/b/name c/d
 <DT><DD>
-npsync -a -t -f c/d/item a/b
+npsync -a -t -f c/d/name a/b
 </DL>
 <P>
 
@@ -564,7 +583,7 @@ Interface utilities could bypass FUSE to accelerate access to the FS.
 File and directory names can be converted somehow for syncing with storage function _item_path.
 So a storage interface can provide specific path composition or translate names from one language to another.
 <DT>  *<DD>
-The utility was written in bash, so can be easily adapted by user e.g. to perform additional actions for synchronization or copying.
+The utility was written in bash, so can be easily adapted by user e.g. to perform additional actions for synchronization or comparison.
 </DL>
 <A NAME="lbAN">&nbsp;</A>
 <H2>SEE ALSO</H2>
@@ -608,6 +627,6 @@ There is NO WARRANTY, to the extent permitted by law.
 This document was created by
 <A HREF="/man/man2html">man2html</A>,
 using the manual pages.<BR>
-Time: 09:06:24 GMT, March 03, 2015
+Time: 09:05:02 GMT, March 04, 2015
 </BODY>
 </HTML>
