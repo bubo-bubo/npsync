@@ -1,3 +1,9 @@
+2021-01-25  Alexey Filin
+
+	* fix for $? lost in nps_failed
+
+	Version 3.3.5
+
 2015-12-30  Alexey Filin
 
 	* fix for --aux-npsync

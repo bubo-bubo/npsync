@@ -3,7 +3,7 @@
 #
 # npsync -- synchronize files and directories
 #
-# Copyright (C) 2013-2015 Alexey Filin
+# Copyright (C) 2013-2021 Alexey Filin
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -77,8 +77,8 @@ NPS_DST_NEWER_SRC=85             # Destination file newer source
 # aux funcs
 
 readonly NPS_UTIL_NAME="$0"
-readonly NPS_UTIL_VERSION=0x30304
-readonly NPS_UTIL_LICENSE="Copyright (C) 2013-2015 Alexey Filin
+readonly NPS_UTIL_VERSION=0x30305
+readonly NPS_UTIL_LICENSE="Copyright (C) 2013-2021 Alexey Filin
 License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>.
 This is free software: you are free to change and redistribute it.
 There is NO WARRANTY, to the extent permitted by law."
@@ -218,19 +218,20 @@ function nps_save_failed_item_record() {
 
 
 # print exit status of failed command and return last exit status
+# $1 -- error num
+# $2 -- utility
 function nps_failed() {
     # save exit code of failed operation to return it
-    local rv=$?
-    case $rv in
-	$NPS_CMD_TERMINATED) nps_echo2err "\`$1' terminated after $NPS_CMD_TERM_TIMEOUT"
+    case $1 in
+	$NPS_CMD_TERMINATED) nps_echo2err "\`$2' terminated after $NPS_CMD_TERM_TIMEOUT"
 	    ;;
-	$NPS_CMD_KILLED) nps_echo2err "\`$1' killed after $NPS_CMD_KILL_TIMEOUT"
+	$NPS_CMD_KILLED) nps_echo2err "\`$2' killed after $NPS_CMD_KILL_TIMEOUT"
 	    ;;
-	*) nps_echo2err "\`$1' failed with exit status $rv"
+	*) nps_echo2err "\`$2' failed with exit status $1"
 	    ;;
     esac
-    nps_save_failed_item_record "$rv" "$1"
-    return $rv
+    nps_save_failed_item_record "$1" "$2"
+    return $1
 }
 
 # print path in a nice way, update for a new storage type if required
@@ -351,9 +352,10 @@ function nps_check_utility() {
 # $3 -- source relative path
 # $4 -- file to save path into
 function nps_save_path_to_file() {
+    local rv=0
     [ ${#4} -eq 0 ] && return 0
     local path=`${nps_vtfuncs["$1_glue_paths"]} "$2" "$3"`
-    echo "$path" >> "$4" || nps_failed "echo \"$path\" >> \"$4\""
+    echo "$path" >> "$4" || { rv=$?; nps_failed $rv "echo \"$path\" >> \"$4\""; return $rv; }
 }
 
 # recursively convert src path to dst format and print convertion
@@ -508,8 +510,9 @@ if [ -x '/bin/cp' ]; then
     # $2 -- item relative path
     # print type in char format ( `-', `d', `l' , etc )
     function posix_get_ftype() {
+	local rv=0
 	local s=`posix_glue_paths "$1" "$2"`
-	local out=`"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_LS" -ld "$s"` || { nps_failed "$NPS_LS -ld \"$s\""; return $?; }
+	local out=`"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_LS" -ld "$s"` || { rv=$?; nps_failed $rv "$NPS_LS -ld \"$s\""; return $rv; }
 	#out=`echo "$out"|"$NPS_AWK" '{print substr($0,1,1)}'`
 	out=`echo "$out"|"$NPS_CUT" -c 1`
         # high performance ("contiguous data") file
@@ -521,8 +524,9 @@ if [ -x '/bin/cp' ]; then
     # $3 -- checksum type
     # return checksum
     function posix_get_cks() {
+	local rv=0
 	local s=`posix_glue_paths "$1" "$2"`
-	local out=`"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "${NPS_CKS_CMD[$3]}" "$s"` || { nps_failed "${NPS_CKS_CMD[$3]} \"$s\""; return $?; }
+	local out=`"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "${NPS_CKS_CMD[$3]}" "$s"` || { rv=$?; nps_failed $rv "${NPS_CKS_CMD[$3]} \"$s\""; return $rv; }
 	echo $out|"$NPS_AWK" '{print $1}'
     }
 
@@ -537,8 +541,9 @@ if [ -x '/bin/cp' ]; then
     # $2 -- item relative path
     # return mode in octal if item exists
     function posix_get_mode() {
+	local rv=0
 	local s=`posix_glue_paths "$1" "$2"`
-	local mode=`"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_STAT" -c %a "$s"` || { nps_failed "$NPS_STAT -c %a \"$s\""; return $?; }
+	local mode=`"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_STAT" -c %a "$s"` || { rv=$?; nps_failed $rv "$NPS_STAT -c %a \"$s\""; return $rv; }
 	echo "0$mode"
     }
 
@@ -546,11 +551,12 @@ if [ -x '/bin/cp' ]; then
     # $2 -- item relative path
     # $3 -- mode
     function posix_set_mode() {
+	local rv=0
 	local s=`posix_glue_paths "$1" "$2"`
 	if [ $NPS_VERBOSE_OUTPUT -gt 1 ]; then
-	    "$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_CHMOD" -v "$3" "$s" || { nps_failed "$NPS_CHMOD -v \"$3\" \"$s\""; return $?; }
+	    "$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_CHMOD" -v "$3" "$s" || { rv=$?; nps_failed $rv "$NPS_CHMOD -v \"$3\" \"$s\""; return $rv; }
 	else
-	    "$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_CHMOD" "$3" "$s" || { nps_failed "$NPS_CHMOD \"$3\" \"$s\""; return $?; }
+	    "$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_CHMOD" "$3" "$s" || { rv=$?; nps_failed $rv "$NPS_CHMOD \"$3\" \"$s\""; return $rv; }
 	fi
     }
 
@@ -558,47 +564,53 @@ if [ -x '/bin/cp' ]; then
     # $2 -- item relative path
     # return ownership in format uid:gid
     function posix_get_owner() {
+	local rv=0
 	local s=`posix_glue_paths "$1" "$2"`
-	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_STAT" -c %u:%g "$s" || { nps_failed "$NPS_STAT -c %u:%g \"$s\""; return $?; }
+	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_STAT" -c %u:%g "$s" || { rv=$?; nps_failed $rv "$NPS_STAT -c %u:%g \"$s\""; return $rv; }
     }
 
     # $1 -- item root path
     # $2 -- item relative path
     # $3 -- owner
     function posix_set_owner() {
+	local rv=0
 	local s=`posix_glue_paths "$1" "$2"`
-	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_CHOWN" "$3" "$s" || { nps_failed "$NPS_CHOWN \"$3\" \"$s\""; return $?; }
+	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_CHOWN" "$3" "$s" || { rv=$?; nps_failed $rv "$NPS_CHOWN \"$3\" \"$s\""; return $rv; }
     }
 
     # $1 -- item root path
     # $2 -- item relative path
     # return modification time in seconds.nanoseconds (since 1970-01-01 00:00:00 UTC)
     function posix_get_mtime() {
+	local rv=0
 	local s=`posix_glue_paths "$1" "$2"`
-	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_DATE" +%s.%N -r "$s" || { nps_failed "$NPS_DATE +%s.%N -r \"$s\""; return $?; }
+	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_DATE" +%s.%N -r "$s" || { rv=$?; nps_failed $rv "$NPS_DATE +%s.%N -r \"$s\""; return $rv; }
     }
 
     # $1 -- item root path
     # $2 -- item relative path
     # $3 -- modification time
     function posix_set_mtime() {
+	local rv=0
 	local s=`posix_glue_paths "$1" "$2"`
-	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_TOUCH" -d "@$3" "$s" || { nps_failed "$NPS_TOUCH -d \"@$3\" \"$s\""; return $?; }
+	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_TOUCH" -d "@$3" "$s" || { rv=$?; nps_failed $rv "$NPS_TOUCH -d \"@$3\" \"$s\""; return $rv; }
     }
 
     # $1 -- item root path
     # $2 -- item relative path
     # return size of file in bytes
     function posix_get_size() {
+	local rv=0
 	local s=`posix_glue_paths "$1" "$2"`
-	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_STAT" -c %s "$s" || { nps_failed "$NPS_STAT -c %s \"$s\""; return $?; }
+	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_STAT" -c %s "$s" || { rv=$?; nps_failed $rv "$NPS_STAT -c %s \"$s\""; return $rv; }
     }
 
     # $1 -- directory root path
     # $2 -- directory relative path
     function posix_ls() {
+	local rv=0
 	local s=`posix_glue_paths "$1" "$2"`
-	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_LS" -1 -A "$s" || { nps_failed "$NPS_LS -1 -A \"$s\""; return $?; }
+	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_LS" -1 -A "$s" || { rv=$?; nps_failed $rv "$NPS_LS -1 -A \"$s\""; return $rv; }
     }
 
     # NB: source args are for reference only
@@ -608,8 +620,9 @@ if [ -x '/bin/cp' ]; then
     # $4 -- destination root path
     # $5 -- destination relative path
     function posix_mkdir() {
+	local rv=0
 	local s=`posix_glue_paths "$4" "$5"`
-	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_MKDIR" -p "$s" || { nps_failed "$NPS_MKDIR -p \"$s\""; return $?; }
+	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_MKDIR" -p "$s" || { rv=$?; nps_failed $rv "$NPS_MKDIR -p \"$s\""; return $rv; }
     }
 
     # NB: source args are for reference only
@@ -622,20 +635,21 @@ if [ -x '/bin/cp' ]; then
     # $6 -- source checksum
     # $7 -- source checksum type
     function posix_cp() {
+	local rv=0
 	local s1=`posix_glue_paths "$2" "$3"`
 	local s2=`posix_glue_paths "$4" "$5"`
 	if [ "$1" == "rfio://" ]; then
 	    if [ $NPS_VERBOSE_OUTPUT -gt 1 ]; then
-		"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RFCP" "$s1" "$s2" || { nps_failed "$NPS_RFCP \"$s1\" \"$s2\""; return $?; }
+		"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RFCP" "$s1" "$s2" || { rv=$?; nps_failed $rv "$NPS_RFCP \"$s1\" \"$s2\""; return $rv; }
 	    else
-		"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RFCP" "$s1" "$s2" >/dev/null || { nps_failed "$NPS_RFCP \"$s1\" \"$s2\""; return $?; }
+		"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RFCP" "$s1" "$s2" >/dev/null || { rv=$?; nps_failed $rv "$NPS_RFCP \"$s1\" \"$s2\""; return $rv; }
 	    fi
 	else
 	    # copying opimized for POSIX-POSIX
 	    if [ $NPS_VERBOSE_OUTPUT -gt 1 ]; then
-		"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_CP" --preserve=all -v "$s1" "$s2" || { nps_failed "$NPS_CP --preserve=all -v \"$s1\" \"$s2\""; return $?; }
+		"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_CP" --preserve=all -v "$s1" "$s2" || { rv=$?; nps_failed $rv "$NPS_CP --preserve=all -v \"$s1\" \"$s2\""; return $rv; }
 	    else
-		"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_CP" --preserve=all "$s1" "$s2" || { nps_failed "$NPS_CP --preserve=all \"$s1\" \"$s2\""; return $?; }
+		"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_CP" --preserve=all "$s1" "$s2" || { rv=$?; nps_failed $rv "$NPS_CP --preserve=all \"$s1\" \"$s2\""; return $rv; }
 	    fi
 	fi
     }
@@ -649,12 +663,13 @@ if [ -x '/bin/cp' ]; then
     # $6 -- source checksum
     # $7 -- source checksum type
     function posix_compare_cks() {
+	local rv=0
 	local s=`posix_glue_paths "$4" "$5"`
-	local cks=`"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "${NPS_CKS_CMD[$7]}" "$s"` || { nps_failed "${NPS_CKS_CMD[$7]} \"$s\""; return $?; }
+	local cks=`"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "${NPS_CKS_CMD[$7]}" "$s"` || { rv=$?; nps_failed $rv "${NPS_CKS_CMD[$7]} \"$s\""; return $rv; }
 	cks=`echo $cks|"$NPS_AWK" '{print $1}'`
 	[ -z "$cks" ] && { nps_perr $NPS_COPY_CKS_MISMATCH "$6" "$1" "$2" "$3" "$cks" "posix://" "$4" "$5"; return $NPS_COPY_CKS_MISMATCH; }
 	if [[ "0x$cks" -ne "0x$6" ]]; then
-	    "$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RM" -f "$s" || { nps_failed "$NPS_RM -f \"$s\""; return $?; }
+	    "$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RM" -f "$s" || { rv=$?; nps_failed $rv "$NPS_RM -f \"$s\""; return $rv; }
 	    nps_perr $NPS_COPY_CKS_MISMATCH "$6" "$1" "$2" "$3" "$cks" "posix://" "$4" "$5"
 	    return $NPS_COPY_CKS_MISMATCH
 	fi
@@ -663,11 +678,12 @@ if [ -x '/bin/cp' ]; then
     # $1 -- file root path
     # $2 -- file relative path
     function posix_rm() {
+	local rv=0
 	local s=`posix_glue_paths "$1" "$2"`
 	if [ $NPS_VERBOSE_OUTPUT -gt 1 ]; then
-	    "$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RM" -v -f "$s" || { nps_failed "$NPS_RM -v -f \"$s\""; return $?; }
+	    "$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RM" -v -f "$s" || { rv=$?; nps_failed $rv "$NPS_RM -v -f \"$s\""; return $rv; }
 	else
-	    "$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RM" -f "$s" || { nps_failed "$NPS_RM -f \"$s\""; return $?; }
+	    "$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RM" -f "$s" || { rv=$?; nps_failed $rv "$NPS_RM -f \"$s\""; return $rv; }
 	fi
     }
 
@@ -804,8 +820,9 @@ if [ -x '/usr/bin/rfcp' ]; then
     # $2 -- item relative path
     # print type in char format ( `-', `d', `l' , etc )
     function rfio_get_ftype() {
+	local rv=0
 	local s=`rfio_glue_paths "$1" "$2"`
-	local out=`"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RFSTAT" "$s"` || { nps_failed "$NPS_RFSTAT \"$s\""; return $?; }
+	local out=`"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RFSTAT" "$s"` || { rv=$?; nps_failed $rv "$NPS_RFSTAT \"$s\""; return $rv; }
 	echo "$out"|"$NPS_AWK" '/^Protection/{print substr($3,1,1)}'
     }
 
@@ -814,6 +831,7 @@ if [ -x '/usr/bin/rfcp' ]; then
     # $3 -- checksum type
     # print checksum
     function rfio_get_cks() {
+	local rv=0
 	local s=`rfio_glue_paths "$1" "$2"`
 	if [ $NPS_GET_REAL_DATA_CKS -eq 0 ]; then
 	    # nsls doesn't print checksum for files with zero size
@@ -822,10 +840,10 @@ if [ -x '/usr/bin/rfcp' ]; then
 		[ "$3" == "AD" ] && echo '1' # adler32 output for empty file
 		return
 	    fi
-	    local out=`"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_NSLS" --checksum "$s"` || { nps_failed "$NPS_NSLS --checksum \"$s\""; return $?; }
+	    local out=`"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_NSLS" --checksum "$s"` || { rv=$?; nps_failed $rv "$NPS_NSLS --checksum \"$s\""; return $rv; }
 	    echo "$out"|"$NPS_AWK" '{print $2}'
 	else
-	    local out=`"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RFCAT" "$s"|"${NPS_CKS_CMD[$3]}"` || { nps_failed "$NPS_RFCAT \"$s\"|${NPS_CKS_CMD[$3]}"; return $?; }
+	    local out=`"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RFCAT" "$s"|"${NPS_CKS_CMD[$3]}"` || { rv=$?; nps_failed $rv "$NPS_RFCAT \"$s\"|${NPS_CKS_CMD[$3]}"; return $rv; }
 	    echo "$out"|"$NPS_AWK" '{print $1}'
 	fi
     }
@@ -834,11 +852,12 @@ if [ -x '/usr/bin/rfcp' ]; then
     # $2 -- file relative path
     # print checksum type
     function rfio_get_cks_type() {
+	local rv=0
 	local s=`rfio_glue_paths "$1" "$2"`
 	# nsls doesn't print checksum for files with zero size
 	local size=`rfio_get_size "$1" "$2"`
 	[ "$size" == "0" ] && { echo 'AD'; return; }
-	local out=`"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_NSLS" --checksum "$s"` || { nps_failed "$NPS_NSLS --checksum \"$s\""; return $?; }
+	local out=`"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_NSLS" --checksum "$s"` || { rv=$?; nps_failed $rv "$NPS_NSLS --checksum \"$s\""; return $rv; }
 	echo "$out"|"$NPS_AWK" '{print $1}'
     }
 
@@ -846,8 +865,9 @@ if [ -x '/usr/bin/rfcp' ]; then
     # $2 -- item relative path
     # print mode in octal
     function rfio_get_mode() {
+	local rv=0
 	local s=`rfio_glue_paths "$1" "$2"`
-	local out=`"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RFSTAT" "$s"` || { nps_failed "$NPS_RFSTAT \"s\""; return $?; }
+	local out=`"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RFSTAT" "$s"` || { rv=$?; nps_failed $rv "$NPS_RFSTAT \"s\""; return $rv; }
 	echo "$out"|"$NPS_AWK" 'BEGIN{FS="[()]"}/^Protection/{print substr($2,length($2)-3)}'
     }
 
@@ -855,17 +875,19 @@ if [ -x '/usr/bin/rfcp' ]; then
     # $2 -- item relative path
     # $3 -- mode
     function rfio_set_mode() {
+	local rv=0
 	local s=`rfio_glue_paths "$1" "$2"`
-	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_NSCHMOD" "$3" "$s" || { nps_failed "$NPS_NSCHMOD \"$3\" \"$s\""; return $?; }
+	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_NSCHMOD" "$3" "$s" || { rv=$?; nps_failed $rv "$NPS_NSCHMOD \"$3\" \"$s\""; return $rv; }
     }
 
     # $1 -- item root path
     # $2 -- item relative path
     # print ownership in format uid:gid
     function rfio_get_owner() {
+	local rv=0
 	local s=`rfio_glue_paths "$1" "$2"`
         #"$NPS_NSLS" -l "$s"|"$NPS_AWK" '{print $3":"$4}'
-	local out=`"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RFSTAT" "$s"` || { nps_failed "$NPS_RFSTAT \"$s\""; return $?; }
+	local out=`"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RFSTAT" "$s"` || { rv=$?; nps_failed $rv "$NPS_RFSTAT \"$s\""; return $rv; }
 	local uid=`echo "$out"|"$NPS_AWK" '/^Uid/{print $3}'`
 	local gid=`echo "$out"|"$NPS_AWK" '/^Gid/{print $3}'`
 	[ -n "$uid" -a -n "$gid" ] && echo "$uid:$gid"
@@ -875,16 +897,18 @@ if [ -x '/usr/bin/rfcp' ]; then
     # $2 -- item relative path
     # $3 -- owner
     function rfio_set_owner() {
+	local rv=0
 	local s=`rfio_glue_paths "$1" "$2"`
-	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_NSCHOWN" "$3" "$s" || { nps_failed "$NPS_NSCHOWN \"$3\" \"$s\""; return $?; }
+	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_NSCHOWN" "$3" "$s" || { rv=$?; nps_failed $rv "$NPS_NSCHOWN \"$3\" \"$s\""; return $rv; }
     }
 
     # $1 -- item root path
     # $2 -- item relative path
     # print modification time in seconds.nanoseconds (since 1970-01-01 00:00:00 UTC)
     function rfio_get_mtime() {
+	local rv=0
 	local s=`rfio_glue_paths "$1" "$2"`
-	local out=`"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RFSTAT" "$s"` || { nps_failed "$NPS_RFSTAT \"$s\""; return $?; }
+	local out=`"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RFSTAT" "$s"` || { nps_failed $rv "$NPS_RFSTAT \"$s\""; return $rv; }
 	out=`echo "$out"|"$NPS_AWK" '/^Last modify/{print substr($0,index($0,":")+2)}'`
 	[ -n "$out" ] && "$NPS_DATE" +%s.%N -d "$out" || echo ""
     }
@@ -893,25 +917,28 @@ if [ -x '/usr/bin/rfcp' ]; then
     # $2 -- item relative path
     # $3 -- modification time
     function rfio_set_mtime() {
+	local rv=0
 	local s=`rfio_glue_paths "$1" "$2"`
-	local mtime=`"$NPS_DATE" -d "@$3" +%Y%m%d%H%M` || { nps_failed "$NPS_DATE -d \"@$3\" +%Y%m%d%H%M"; return $?; }
-	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_NSTOUCH" -c -m -t "$mtime" "$s" || { nps_failed "$NPS_NSTOUCH -c -m -t \"$mtime\" \"$s\""; return $?; }
+	local mtime=`"$NPS_DATE" -d "@$3" +%Y%m%d%H%M` || { rv=$?; nps_failed $rv "$NPS_DATE -d \"@$3\" +%Y%m%d%H%M"; return $rv; }
+	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_NSTOUCH" -c -m -t "$mtime" "$s" || { rv=$?; nps_failed $rv "$NPS_NSTOUCH -c -m -t \"$mtime\" \"$s\""; return $rv; }
     }
 
     # $1 -- item root path
     # $2 -- item relative path
     # return size of file in bytes
     function rfio_get_size() {
+	local rv=0
 	local s=`rfio_glue_paths "$1" "$2"`
-	local out=`"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RFSTAT" "$s"` || { nps_failed "$NPS_RFSTAT \"$s\""; return $?; }
+	local out=`"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RFSTAT" "$s"` || { rv=$?; nps_failed $rv "$NPS_RFSTAT \"$s\""; return $rv; }
 	echo "$out"|"$NPS_AWK" '/^Size \(bytes\)/{print substr($0,index($0,":")+2)}'
     }
 
     # $1 -- directory root path
     # $2 -- directory relative path
     function rfio_ls() {
+	local rv=0
 	local s=`rfio_glue_paths "$1" "$2"`
-	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_NSLS" "$s" || { nps_failed "$NPS_NSLS \"$s\""; return $?; }
+	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_NSLS" "$s" || { rv=$?; nps_failed $rv "$NPS_NSLS \"$s\""; return $rv; }
     }
 
     # NB: source args are for reference only
@@ -921,8 +948,9 @@ if [ -x '/usr/bin/rfcp' ]; then
     # $4 -- destination root path
     # $5 -- destination relative path
     function rfio_mkdir() {
+	local rv=0
 	local s=`rfio_glue_paths "$4" "$5"`
-	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_NSMKDIR" -p "$s" || { nps_failed "$NPS_NSMKDIR -p \"$s\""; return $?; }
+	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_NSMKDIR" -p "$s" || { rv=$?; nps_failed $rv "$NPS_NSMKDIR -p \"$s\""; return $rv; }
     }
 
     # NB: source args are for reference only
@@ -935,6 +963,7 @@ if [ -x '/usr/bin/rfcp' ]; then
     # $6 -- source checksum
     # $7 -- source checksum type
     function rfio_cp() {
+	local rv=0
 	local s1=`rfio_glue_paths "$2" "$3"`
 	local s2=`rfio_glue_paths "$4" "$5"`
 	[ "$7" != "AD" ] && { nps_perr $NPS_CKS_TYPE_NOT_SUPPORTED "$7" "$1" "$2" "$3"; return $NPS_CKS_TYPE_NOT_SUPPORTED; }
@@ -942,9 +971,9 @@ if [ -x '/usr/bin/rfcp' ]; then
 	    "$NPS_NSTOUCH" "$s2" && "$NPS_NSSETCHECKSUM" -n adler32 -k "$6" "$s2" || return $?
 	fi
 	if [ $NPS_VERBOSE_OUTPUT -gt 1 ]; then
-	    "$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RFCP" "$s1" "$s2" || { nps_failed "$NPS_RFCP \"$s1\" \"$s2\""; return $?; }
+	    "$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RFCP" "$s1" "$s2" || { rv=$?; nps_failed $rv "$NPS_RFCP \"$s1\" \"$s2\""; return $rv; }
 	else
-	    "$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RFCP" "$s1" "$s2" >/dev/null || { nps_failed "$NPS_RFCP \"$s1\" \"$s2\""; return $?; }
+	    "$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_RFCP" "$s1" "$s2" >/dev/null || { rv=$?; nps_failed $rv "$NPS_RFCP \"$s1\" \"$s2\""; return $rv; }
 	fi
     }
 
@@ -963,17 +992,19 @@ if [ -x '/usr/bin/rfcp' ]; then
     # $1 -- file root path
     # $2 -- file relative path
     function rfio_rm() {
+	local rv=0
 	local s=`rfio_glue_paths "$1" "$2"`
-	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_NSRM" -f "$s" || { nps_failed "$NPS_NSRM -f \"$s\""; return $?; }
+	"$NPS_TIMEOUT" -k "$NPS_CMD_KILL_TIMEOUT" "$NPS_CMD_TERM_TIMEOUT" "$NPS_NSRM" -f "$s" || { rv=$?; nps_failed $rv "$NPS_NSRM -f \"$s\""; return $rv; }
     }
 
     # $1 -- destination mtime
     # $2 -- source mtime
     function rfio_compare_mtime() {
+	local rv=0
 	[ -z "$1" -o -z "$2" ] && return 1
 	# NB: seconds are ignored by castor
-	local t1=`"$NPS_DATE" -d "@$1" +%Y%m%d%H%M` || { nps_failed "$NPS_DATE -d \"@$1\" +%Y%m%d%H%M"; return $?; }
-	local t2=`"$NPS_DATE" -d "@$2" +%Y%m%d%H%M` || { nps_failed "$NPS_DATE -d \"@$2\" +%Y%m%d%H%M"; return $?; }
+	local t1=`"$NPS_DATE" -d "@$1" +%Y%m%d%H%M` || { rv=$?; nps_failed $rv "$NPS_DATE -d \"@$1\" +%Y%m%d%H%M"; return $rv; }
+	local t2=`"$NPS_DATE" -d "@$2" +%Y%m%d%H%M` || { rv=$?; nps_failed $rv "$NPS_DATE -d \"@$2\" +%Y%m%d%H%M"; return $rv; }
 	if (( "$t1" == "$t2" )); then
 	    echo "same_age"
 	elif (( "$t1" < "$t2" )); then
@@ -1844,7 +1875,7 @@ function nps_sync_dir() {
     # NB: a long list requires a lot of memory
     local item_name
     [ $NPS_VERBOSE_OUTPUT -gt 2 ] && echo "listing source "`nps_format_path "$1" "$2" "$3"`
-    local items=`${nps_vtfuncs["$1_ls"]} "$2" "$3"` || { IFS="$OIFS"; return $?; }
+    local items=`${nps_vtfuncs["$1_ls"]} "$2" "$3"` || { rv=$?; IFS="$OIFS"; return $rv; }
     local save_NPS_NPSYNC_ITEM_PATH="$NPS_NPSYNC_ITEM_PATH"
     for item_name in $items; do
 	rv=0
@@ -2100,8 +2131,8 @@ function nps_sync_src_npsync() {
 # $8 -- mtime
 # $9 -- item path
 function nps_save_npsync_record() {
-    echo "$2 $3 $4 $5 $6 $7 $8 \`$9'" >> "$1" || nps_failed "echo $2 $3 $4 $5 $6 $7 $8 \`$9' >> \"$1\""
-    return $?
+    local rv=0
+    echo "$2 $3 $4 $5 $6 $7 $8 \`$9'" >> "$1" || { rv=$?; nps_failed $rv "echo $2 $3 $4 $5 $6 $7 $8 \`$9' >> \"$1\""; return $rv; }
 }
 
 # save destination npsync:// file
